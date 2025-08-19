@@ -11,6 +11,13 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from typing import List
 
+from AD2C.callbacks.pIControllerCallback import *
+from AD2C.callbacks.SndCallback import SndCallback as SndCallbackClass
+from AD2C.callbacks.SimpleProportionalController import SimpleProportionalController
+from AD2C.callbacks.clusterSndCallback import clusterSndCallback
+from AD2C.callbacks.fixed_callbacks import *
+
+
 import benchmarl.models
 from benchmarl.algorithms import *
 from benchmarl.environments import VmasTask
@@ -79,9 +86,10 @@ def hydra_main(cfg: DictConfig) -> None:
     
     # Define SND arms and other parameters
     # snd_arms = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    snd_arms = [1,2,3]
-    exploration_frames = 6_000_000
-    final_frames = 6_000_000
+    snd_arms = [0.5, 0.8, 1,2, 3]
+    # snd_arms = [1]
+    exploration_frames = 1_200_000
+    # final_frames = 6_000_000
     
     base_save_folder = HydraConfig.get().run.dir
 
@@ -102,17 +110,9 @@ def hydra_main(cfg: DictConfig) -> None:
         exploration_cfg.model.desired_snd = snd
                 
         callbacks = [
-            # EloEvaluationCallback(
-            #     snd=snd, 
-            #     run_name=f"snd_{snd}", 
+            # SndCallbackClass(
             #     control_group="agents",
-            #     save_folder=run_save_folder # Pass the folder path here
-            # ),
-            
-            # SndCallback(
-            #     control_group="agents",
-            #     proportional_gain=0.2,
-            #     initial_snd=1,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
+            #     initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
             # ),
 
             # gradientBaseSndCallback(
