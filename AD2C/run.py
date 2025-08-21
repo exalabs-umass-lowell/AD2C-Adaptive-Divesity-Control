@@ -68,18 +68,7 @@ def get_experiment(cfg: DictConfig) -> Experiment:
         config=experiment_config,
 
         callbacks=[
-            # SndCallback(),
-            SimpleProportionalController(
-                control_group="agents",
-                proportional_gain=0.2,
-                initial_snd=0.5,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
-            ),
-            # HillClimbingMABCallback(
-            #     control_group="agents",
-            #     snd_arms=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-            #     exploration_epsilon=0.1 
-            # ),
-
+            SndCallback(),
             NormLoggerCallback(),
             ActionSpaceLoss(
                 use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr

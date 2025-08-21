@@ -3,12 +3,11 @@
 #  All rights reserved.
 
 import torch
-from tensordict import TensorDictBase, TensorDict
+from tensordict import TensorDictBase
 from torchrl.envs import EnvBase
 
-# Using the more robust helper function to find the correct model instance
-from AD2C.callbacks.utils import get_het_model
-from AD2C.snd import compute_behavioral_distance
+from het_control.callback import get_het_model
+from het_control.snd import compute_behavioral_distance
 
 
 def render_callback(experiment, env: EnvBase, data: TensorDictBase):
@@ -22,20 +21,15 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
 
     # 1. Reliably find the underlying heterogeneous model, even if wrapped
     model = get_het_model(policy)
-
-    env_index = 0  # We will render the first parallel environment
+    env_index = 0
 
     def snd(pos):
         """
-        Given a batch of positions, this function returns the SND for each position.
-        This function is fully vectorized to be highly performant.
+        Given a position, this function returns the SND of the policies in that observation
         """
-        
-        # Get observations for the ENTIRE batch of positions in one go
         obs = env.scenario.observation_from_pos(
             torch.tensor(pos, device=model.device), env_index=env_index
         )  # Get the observation in the scenarip, given the position
-        
         obs = obs.view(-1, env.n_agents, obs.shape[-1]).to(torch.float)
         obs_td = TensorDict(
             {"agents": TensorDict({"observation": obs}, obs.shape[:2])}, obs.shape[:1]
@@ -47,11 +41,14 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
             agent_actions.append(
                 model._forward(obs_td, agent_index=i).get(model.out_key)
             )
-        # Calculate SND using agents output
+        # Compute the SND using the agents' output
         distance = compute_behavioral_distance(
             agent_actions,
-            just_mean=True,
-        ).view(-1, 1)
+            just_mean=False,
+        )
+        # Calculate the mean for the batch and ensure correct shape
+        distance = distance_matrix.mean(dim=[-1, -2]).view(-1, 1)
+
         return distance
 
     # Render the environment with the fast, vectorized SND visualization
