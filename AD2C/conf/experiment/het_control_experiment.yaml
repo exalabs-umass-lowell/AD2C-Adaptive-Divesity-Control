@@ -3,9 +3,9 @@ defaults:
   - _self_
 
 # The device for collection (e.g. cuda)
-sampling_device: "cuda:2"
+sampling_device: "cuda"
 # The device for training (e.g. cuda)
-train_device: "cuda:2"
+train_device: "cuda"
 
 # Whether to share the parameters of the policy within agent groups
 share_policy_params: True # This won't matter as our model ignores it
@@ -82,7 +82,7 @@ off_policy_init_random_frames: 0
 
 evaluation: True
 # Whether to render the evaluation (if rendering is available
-render: False
+render: True
 # Frequency of evaluation in terms of collected frames (this should be a multiple of on/off_policy_collected_frames_per_batch)
 evaluation_interval: 60_000
 # Number of episodes that evaluation is run on
