@@ -6,8 +6,8 @@ import torch
 from tensordict import TensorDictBase
 from torchrl.envs import EnvBase
 
-from het_control.callback import get_het_model
-from het_control.snd import compute_behavioral_distance
+from AD2C.callbacks.utils import get_het_model
+from AD2C.snd import compute_behavioral_distance
 
 
 def render_callback(experiment, env: EnvBase, data: TensorDictBase):
