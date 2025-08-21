@@ -1,6 +1,4 @@
-import os
-import pickle
-from typing import List, Dict,Any, Callable
+from typing import List
 
 from PIL import Image
 from matplotlib import pyplot as plt
@@ -9,12 +7,11 @@ import io
 import torch
 import wandb
 from tensordict import TensorDictBase, TensorDict
-from typing import List, Dict, Union
+from typing import List
 
 from benchmarl.experiment.callback import Callback
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
 from AD2C.snd import compute_behavioral_distance
-from AD2C.utils import overflowing_logits_norm
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -23,6 +20,12 @@ from scipy.spatial.distance import euclidean
 
 from callbacks.utils import *
 import networkx as nx 
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import io
+from PIL import Image
+import wandb
 
 # def plot_agent_distances(pairwise_distances_tensor, n_agents):
 #     G = nx.complete_graph(n_agents)
@@ -68,18 +71,22 @@ import networkx as nx
 #     plt.close(fig)
 #     return wandb.Image(Image.open(buffer))
 
-
-
 def plot_agent_distances(pairwise_distances_tensor, n_agents):
     G = nx.complete_graph(n_agents)
-    distances = pairwise_distances_tensor.cpu().numpy()
+    
+    # Ensure the input is a 1D array of distances
+    # This reshapes it to a 1D array if it's not already
+    distances = pairwise_distances_tensor.cpu().numpy().flatten()
     
     edge_idx = 0
+    # Assign a scalar distance to each edge
     for u, v in G.edges():
-        G.edges[(u, v)]['distance'] = distances[edge_idx]
-        G.edges[(u, v)]['weight'] = 1.0 / (distances[edge_idx] + 1e-5)
-        edge_idx += 1
-
+        if edge_idx < len(distances):
+            G.edges[(u, v)]['distance'] = distances[edge_idx].item()
+            G.edges[(u, v)]['weight'] = 1.0 / (distances[edge_idx].item() + 1e-5)
+            edge_idx += 1
+    
+    # Now, the 'distance' attribute for each edge is a single float, not an array
     edge_labels = {
         (u, v): f"{data['distance']:.2f}" for u, v, data in G.edges(data=True)
     }
@@ -100,58 +107,166 @@ def plot_agent_distances(pairwise_distances_tensor, n_agents):
     plt.savefig(buffer, format='png')
     buffer.seek(0)
     plt.close(fig)
+    return wandb.Image(Image.open(buffer))  
+
+# def plot_trajectory_3d(snd, returns, episodes, target_diversity):
+    """
+    Generates a 3D line chart of SND, mean return, and episode number, including the target diversity trajectory.
+    """
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Line plot for Actual Diversity
+    ax.plot(episodes, snd, returns, c='b', marker='o', label='Actual Diversity Trajectory')
+
+    # Line plot for Target Diversity
+    ax.plot(episodes, target_diversity, returns, c='r', marker='x', linestyle='--', label='Target Diversity Trajectory')
+
+    ax.set_xlabel('Episode Number')
+    ax.set_ylabel('SND (Behavioral Distance)')
+    ax.set_zlabel('Mean Return')
+    ax.set_title('3D Trajectory of Mean Return and SND')
+    ax.legend()
+    plt.tight_layout()
+
+    # Convert plot to wandb image
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
+    plt.close(fig)
     return wandb.Image(Image.open(buffer))
 
+
+# def plot_trajectory_3d(snd, returns, episodes, target_diversity):
+#     """
+#     Generates a 3D line chart of SND, mean return, and episode number, including the target diversity trajectory.
+#     """
+#     fig = plt.figure(figsize=(12, 10))
+#     ax = fig.add_subplot(111, projection='3d')
+
+#     # Line plot for Actual Diversity
+#     ax.plot(episodes, snd, returns, c='b', marker='o', label='Actual Diversity Trajectory')
+
+#     # Add text labels for the actual trajectory points
+#     for i, (ep, s, r) in enumerate(zip(episodes, snd, returns)):
+#         ax.text(
+#             ep, 
+#             s, 
+#             r, 
+#             f'({s:.2f}, {r:.2f})', 
+#             color='black', 
+#             ha='center', 
+#             va='bottom', 
+#             fontsize=8
+#         )
+
+#     # Line plot for Target Diversity
+#     ax.plot(episodes, target_diversity, returns, c='r', marker='x', linestyle='--', label='Target Diversity Trajectory')
+
+#     ax.set_xlabel('Episode Number')
+#     ax.set_ylabel('SND (Behavioral Distance)')
+#     ax.set_zlabel('Mean Return')
+#     ax.set_title('3D Trajectory of Mean Return and SND')
+#     ax.legend()
+#     plt.tight_layout()
+
+#     # Convert plot to wandb image
+#     buffer = io.BytesIO()
+#     plt.savefig(buffer, format='png')
+#     buffer.seek(0)
+#     plt.close(fig)
+#     return wandb.Image(Image.open(buffer))
+
+# def plot_trajectory_3d(snd, returns, episodes, target_diversity):
+#     """
+#     Generates a 3D line chart of SND, mean return, and episode number, including the target diversity trajectory.
+#     """
+#     fig = plt.figure(figsize=(14, 12))
+#     ax = fig.add_subplot(111, projection='3d')
+
+#     # Line plot for Actual Diversity
+#     ax.plot(episodes, snd, returns, c='b', marker='o', label='Actual Diversity Trajectory')
+
+#     # Add text labels for the actual trajectory points
+#     for i, (ep, s, r) in enumerate(zip(episodes, snd, returns)):
+#         ax.text(
+#             ep, 
+#             s, 
+#             r, 
+#             f'E{ep}: ({s:.2f}, {r:.2f})', # Include episode number for clarity
+#             color='black', 
+#             ha='center', 
+#             va='bottom', 
+#             fontsize=8
+#         )
+
+#     # Line plot for Target Diversity
+#     ax.plot(episodes, target_diversity, returns, c='r', marker='x', linestyle='--', label='Target Diversity Trajectory')
+    
+#     # Add text labels for the target diversity trajectory
+#     for i, (ep, td, r) in enumerate(zip(episodes, target_diversity, returns)):
+#         ax.text(
+#             ep, 
+#             td, 
+#             r, 
+#             f'E{ep}: ({td:.2f}, {r:.2f})', # Include episode number and label target
+#             color='red', 
+#             ha='center', 
+#             va='bottom', 
+#             fontsize=8
+#         )
+
+#     ax.set_xlabel('Episode Number')
+#     ax.set_ylabel('SND (Behavioral Distance)')
+#     ax.set_zlabel('Mean Return')
+#     ax.set_title('3D Trajectory of Mean Return and SND')
+#     ax.legend()
+#     plt.tight_layout()
+
+#     # Convert plot to wandb image
+#     buffer = io.BytesIO()
+#     plt.savefig(buffer, format='png')
+#     buffer.seek(0)
+#     plt.close(fig)
+#     return wandb.Image(Image.open(buffer))
+
 def plot_trajectory_3d(snd, returns, episodes, target_diversity):
-        """
-        Generates a 3D line chart of SND, mean return, and episode number, including the target diversity trajectory.
-        """
-        fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
+    """
+    Generates a 3D line chart of SND, mean return, and episode number, including the target diversity trajectory.
+    """
 
-        # Line plot for Actual Diversity
-        ax.plot(episodes, snd, returns, c='b', marker='o', label='Actual Diversity Trajectory')
+    fig = plt.figure(figsize=(14, 12))
+    ax = fig.add_subplot(111, projection='3d')
 
-        # Line plot for Target Diversity
+    # Plot Actual Diversity Trajectory
+    ax.plot(episodes, snd, returns, c='b', marker='o', label='Actual Diversity Trajectory')
+    for ep, s, r in zip(episodes, snd, returns):
+        ax.text(ep, s, r, f'E{ep}: ({s:.2f}, {r:.2f})',
+                color='black', ha='right', va='bottom', fontsize=8)
+
+    # Plot Target Diversity Trajectory if it is not None and has same length as episodes
+    if target_diversity is not None and len(target_diversity) == len(episodes):
         ax.plot(episodes, target_diversity, returns, c='r', marker='x', linestyle='--', label='Target Diversity Trajectory')
+        for ep, td, r in zip(episodes, target_diversity, returns):
+            ax.text(ep, td, r, f'E{ep}: ({td:.2f}, {r:.2f})',
+                    color='red', ha='left', va='top', fontsize=8)
 
-        ax.set_xlabel('Episode Number')
-        ax.set_ylabel('SND (Behavioral Distance)')
-        ax.set_zlabel('Mean Return')
-        ax.set_title('3D Trajectory of Mean Return and SND')
-        ax.legend()
-        plt.tight_layout()
+    ax.set_ylim(0, 3)    # SND axis scale
+    ax.set_zlim(-2, 5)           # Return axis scale
 
-        # Convert plot to wandb image
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
-        buffer.seek(0)
-        plt.close(fig)
-        return wandb.Image(Image.open(buffer))
+    ax.set_xlabel('Episode Number')
+    ax.set_ylabel('SND (Behavioral Distance)')
+    ax.set_zlabel('Mean Return')
+    ax.set_title('3D Trajectory of Mean Return and SND')
+    ax.legend()
 
-# def plot_trajectory_3d(snd, returns, episodes):
-#         """
-#         Generates a 3D line chart of SND, mean return, and episode number.
-#         """
-#         fig = plt.figure(figsize=(10, 8))
-#         ax = fig.add_subplot(111, projection='3d')
+    # Save to bytes buffer for wandb
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
+    plt.close(fig)
+    return wandb.Image(Image.open(buffer))
 
-#         # Line plot for Actual Diversity
-#         ax.plot(episodes, snd, returns, c='b', marker='o', label='Actual Diversity Trajectory')
-
-#         ax.set_xlabel('Episode Number')
-#         ax.set_ylabel('SND (Behavioral Distance)')
-#         ax.set_zlabel('Mean Return')
-#         ax.set_title('3D Trajectory of Mean Return and SND')
-#         ax.legend()
-#         plt.tight_layout()
-
-#         # Convert plot to wandb image
-#         buffer = io.BytesIO()
-#         plt.savefig(buffer, format='png')
-#         buffer.seek(0)
-#         plt.close(fig)
-#         return wandb.Image(Image.open(buffer))
 
 class clusterSndCallback(Callback):
     def __init__(

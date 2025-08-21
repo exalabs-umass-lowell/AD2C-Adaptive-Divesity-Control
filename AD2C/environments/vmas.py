@@ -7,7 +7,7 @@ from tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
 
 # Using the more robust helper function to find the correct model instance
-from AD2C.callback import get_het_model
+from AD2C.callbacks.utils import get_het_model
 from AD2C.snd import compute_behavioral_distance
 
 
