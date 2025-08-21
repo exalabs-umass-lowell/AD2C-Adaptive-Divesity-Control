@@ -1,0 +1,27 @@
+# In conf/callbacks/pid_control.yaml
+
+# This is a unique name for your callback instance. You can name it anything.
+snd_pid_manager:
+  # This is the most important line: it tells Hydra where to find the Python class.
+  # Make sure this path is correct for your project structure.
+  _target_: AD2C.callbacks.SndCallback
+
+  # --- PID Controller Parameters ---
+  # These are the parameters for your callback's __init__ method.
+
+  # The agent group you want to control with the PID logic.
+  pid_group: "agents" # IMPORTANT: Change "agents" to your group's name if different.
+  
+  # Set to true to activate the PID controller.
+  use_pid_controller: true
+  
+  # The starting value for desired_snd.
+  initial_snd: 0
+  
+  # PID gains. You will need to tune these for your environment.
+  kp: 0.1   # Proportional gain
+  ki: 0.01  # Integral gain
+  kd: 0.005 # Derivative gain
+  
+  # How quickly the controller's reward baseline adapts to new performance.
+  baseline_update_rate_alpha: 0.1
