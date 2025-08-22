@@ -87,7 +87,6 @@ def plot_agent_distances(pairwise_distances_tensor, n_agents):
             G.edges[(u, v)]['weight'] = 1.0 / (distances[edge_idx].item() + 1e-5)
             edge_idx += 1
     
-    # Now, the 'distance' attribute for each edge is a single float, not an array
     edge_labels = {
         (u, v): f"{data['distance']:.2f}" for u, v, data in G.edges(data=True)
     }
