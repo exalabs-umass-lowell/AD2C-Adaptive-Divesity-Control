@@ -89,18 +89,23 @@ class ExtremumSeekingController(Callback):
             print(f"\nWARNING: A compatible model was not found for group '{self.control_group}'. Disabling controller.\n")
             self.model = None
     
-                
     def on_evaluation_end(self, rollouts: List[TensorDictBase]):
         if self.model is None:
             return
-
         logs_to_push = {}
 
-        episode_snd = []
-        episode_returns = []
-        
+        # 1. Collect rewards + compute actual diversity for logging
+        episode_rewards = []
+        episode_diversity = []
+
         with torch.no_grad():
             for r in rollouts:
+                # Total reward
+                reward_key = ('next', self.control_group, 'reward')
+                total_reward = r.get(reward_key).sum().item() if reward_key in r.keys(include_nested=True) else 0
+                episode_rewards.append(total_reward)
+
+                # Behavioral diversity (just for logging, not control)
                 obs = r.get((self.control_group, "observation"))
                 agent_actions = []
                 for i in range(self.model.n_agents):
@@ -109,60 +114,48 @@ class ExtremumSeekingController(Callback):
                     }, batch_size=obs.shape[:-1])
                     action_td = self.model._forward(temp_td, agent_index=i, compute_estimate=False)
                     agent_actions.append(action_td.get(self.model.out_key))
+                diversity_tensor = compute_behavioral_distance(agent_actions, just_mean=False)
+                episode_diversity.append(diversity_tensor.mean().item())
 
-                pairwise_distances_tensor = compute_behavioral_distance(agent_actions, just_mean=False)
-                episode_snd.append(pairwise_distances_tensor.mean().item())
-
-                reward_key = ('next', self.control_group, 'reward')
-                total_reward = r.get(reward_key).sum().item() if reward_key in r.keys(include_nested=True) else 0
-                episode_returns.append(total_reward)
-
-        if not episode_returns:
-            print("\nWARNING: No episode returns found. Cannot update controller.\n")
+        if not episode_rewards:
+            print("\nWARNING: No episode rewards found. Cannot update controller.\n")
             self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
             return
 
-        actual_snd = np.mean(episode_snd)
-        mean_return = np.mean(episode_returns)
-        correlation_score = correlation_score_f(episode_snd, episode_returns)
-        
-        # Calculate the performance score to be optimized
-        performance_score = (self.beta * mean_return) + ((1 - self.beta) * correlation_score)
-        
-        # 1. Dither signal
+        mean_reward = np.mean(episode_rewards)
+        mean_diversity = np.mean(episode_diversity) if episode_diversity else 0.0
+
+        # 2. ESC core logic (reward-based)
         self._n_iters += 1
         dither_signal = self.dither_amplitude * np.sin(self.dither_frequency * self._n_iters)
-        
-        # 2. Demodulation
-        demodulated_signal = performance_score * dither_signal
-        
-        # 3. Low-pass filter (recursive average)
-        self._low_pass_filtered_signal = (1 - self.low_pass_filter_alpha) * self._low_pass_filtered_signal + \
-                                         self.low_pass_filter_alpha * demodulated_signal
-        
-        # 4. Integration
+
+        demodulated_signal = mean_reward * dither_signal
+
+        self._low_pass_filtered_signal = (
+            (1 - self.low_pass_filter_alpha) * self._low_pass_filtered_signal +
+            self.low_pass_filter_alpha * demodulated_signal
+        )
+
         self._estimated_gradient += self.integral_gain * self._low_pass_filtered_signal
-        
-        # 5. Update the desired SND
         update_step = self._estimated_gradient
         update_step_clamped = self.max_update_step * np.tanh(update_step / self.max_update_step)
-        
-        new_snd_tensor = self.initial_snd + dither_signal + update_step_clamped
-        self.model.desired_snd[:] = torch.clamp(torch.tensor(new_snd_tensor), min=0.0)
-        
-        print(f"Updated SND: {self.model.desired_snd.item()} (Update Step: {update_step_clamped})")
 
-        print_plt(episode_snd, episode_returns, "SND vs. Reward per Episode", self.model.desired_snd.item())
-        
-        logs_to_push[f"extremum_seeking/snd_actual"] = actual_snd
-        logs_to_push[f"extremum_seeking/target_snd"] = self.model.desired_snd.item()
+        # 3. Update diversity parameter
+        new_diversity = self.initial_snd + dither_signal + update_step_clamped
+        self.model.desired_snd[:] = torch.clamp(torch.tensor(new_diversity), min=0.0)
+
+        print(f"[ESC] Updated SND: {self.model.desired_snd.item()} "
+            f"(Reward: {mean_reward:.3f}, Diversity: {mean_diversity:.3f}, Update Step: {update_step_clamped:.4f})")
+
+        # 4. Logging
         logs_to_push.update({
-            "extremum_seeking/mean_return": mean_return,
-            "extremum_seeking/performance_score": performance_score,
-            "extremum_seeking/dither_signal": dither_signal,
-            "extremum_seeking/demodulated_signal": demodulated_signal,
-            "extremum_seeking/low_pass_filtered_signal": self._low_pass_filtered_signal,
-            "extremum_seeking/estimated_gradient": self._estimated_gradient,
-            "extremum_seeking/update_step_clamped": update_step_clamped,
+            "esc/mean_reward": mean_reward,
+            "esc/diversity_actual": mean_diversity,
+            "esc/diversity_target": self.model.desired_snd.item(),
+            "esc/dither_signal": dither_signal,
+            "esc/demodulated_signal": demodulated_signal,
+            "esc/low_pass_filtered_signal": self._low_pass_filtered_signal,
+            "esc/estimated_gradient": self._estimated_gradient,
+            "esc/update_step_clamped": update_step_clamped,
         })
         self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
