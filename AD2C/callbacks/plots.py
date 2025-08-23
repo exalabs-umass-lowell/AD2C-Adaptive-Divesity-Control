@@ -174,7 +174,7 @@ def save_trajectory_data_to_csv(episodes, snd, returns, target_diversity=None, r
     
 
 def save_pairwise_diversity_to_csv(pairwise_distances_tensor, episode_number, n_agents, file_prefix='agent_distances'):
-    folder = '/home/grad/doc/2027/spatel2/MARL-UAV/Saved Pairwise Diversities'
+    folder = '/home/svarp/Desktop/Projects/AD2C/ControllingBehavioralDiversity/Saved Pairwise Diversities'
     os.makedirs(folder, exist_ok=True)
     distances = pairwise_distances_tensor.cpu().numpy().flatten()
     filename = f"{file_prefix}_ep{episode_number}_n{n_agents}.csv"
