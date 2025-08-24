@@ -19,13 +19,14 @@ from benchmarl.hydra_config import (
 from AD2C.callback123 import *
 from AD2C.environments.vmas import render_callback
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpiricalConfig
-
+from AD2C.models.het_control_mlp_esc import HetControlMlpEscConfig
 
 
 def setup(task_name):
     benchmarl.models.model_config_registry.update(
         {
-            "hetcontrolmlpempirical": HetControlMlpEmpiricalConfig,
+            # "hetcontrolmlpempirical": HetControlMlpEmpiricalConfig,
+            "hetcontrolmlpesc" : HetControlMlpEscConfig
         }
     )
     if task_name == "vmas/navigation":
@@ -68,7 +69,7 @@ def get_experiment(cfg: DictConfig) -> Experiment:
         config=experiment_config,
 
         callbacks=[
-            SndCallback(),
+            # SndCallback(),
             NormLoggerCallback(),
             ActionSpaceLoss(
                 use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr

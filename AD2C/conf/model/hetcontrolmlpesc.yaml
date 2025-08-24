@@ -1,0 +1,37 @@
+# Model name (do not change)
+name: hetcontrolmlpesc
+
+# List of layers in the MLP.
+num_cells: [256, 256]
+# Activation class between MLP layers.
+activation_class: torch.nn.Tanh
+
+# --- Extremum Seeking Control (ESC) Parameters ---
+
+# The learning rate/gain (K) for the ESC integrator. Controls how quickly the
+# controller adapts the scaling factor.
+esc_gain: 0.01
+
+# The amplitude (a) of the dither signal. This is the size of the "jiggle"
+# applied to the scaling factor to probe the performance gradient.
+esc_amplitude: 0.1
+
+# The frequency (ω) of the dither signal. Controls how fast the "jiggle" oscillates.
+esc_frequency: 0.5
+
+# The initial value for the diversity scaling factor (k_hat). A good starting
+# point for the controller's search.
+initial_k: 1.0
+
+# --- Standard Parameters ---
+
+# Whether to process the homogeneous part of the policy
+# with a tanh squashing operation to the action space domain
+process_shared: True
+
+# Parameter filled dynamically. Do not change.
+probabilistic: null
+# Parameter filled dynamically. Do not change.
+scale_mapping: null
+
+# desired_snd: 0.5
