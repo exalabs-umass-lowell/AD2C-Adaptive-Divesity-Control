@@ -176,11 +176,11 @@ class clusterSndCallback(Callback):
             graph_plot = plot_agent_distances(final_distances_tensor, self.model.n_agents)
             logs_to_push["ClusterBase/Agent_Distances_Graph"] = graph_plot
 
-            save_pairwise_diversity_to_csv(
-                pairwise_distances_tensor=final_distances_tensor,
-                episode_number=self.experiment.n_iters_performed,
-                n_agents= self.model.n_agents
-            )
+            # save_pairwise_diversity_to_csv(
+            #     pairwise_distances_tensor=final_distances_tensor,
+            #     episode_number=self.experiment.n_iters_performed,
+            #     n_agents= self.model.n_agents
+            # )
 
         # Trajectory plot if more than one episode
         if len(self.eps_number) > 1:
@@ -198,13 +198,13 @@ class clusterSndCallback(Callback):
                 )
                 logs_to_push["ClusterBase/Trajectory_Plot_2D"] = plot_2d
                 
-                save_trajectory_data_to_csv(
-                    episodes=self.eps_number,
-                    snd=self.eps_actual_diversity,
-                    returns=self.eps_mean_returns,
-                    target_diversity=self.eps_target_Diversity,
-                    run_name_suffix=f'initial_snd_{self.initial_snd:.2f}'
-                )
+                # save_trajectory_data_to_csv(
+                #     episodes=self.eps_number,
+                #     snd=self.eps_actual_diversity,
+                #     returns=self.eps_mean_returns,
+                #     target_diversity=self.eps_target_Diversity,
+                #     run_name_suffix=f'initial_snd_{self.initial_snd:.2f}'
+                # )
                 
                 trajectory_plot = plot_trajectory_3d(
                     snd=self.eps_actual_diversity,
