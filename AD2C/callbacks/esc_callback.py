@@ -1,7 +1,3 @@
-#  Copyright (c) 2024.
-#  ProrokLab (https://www.proroklab.org/)
-#  All rights reserved.
-
 import os
 import pickle
 from typing import List, Dict,Any, Callable
@@ -40,6 +36,8 @@ class ExtremumSeekingController(Callback):
         low_pass_filter_alpha: float = 0.1,
         max_update_step: float = 0.2,
         beta: float = 0.5,
+        hpf: float = 0.1,  # New high-pass filter parameter
+        lpf_a: float = 0.1  # New probe amplitude filter parameter
     ):
         super().__init__()
         self.control_group = control_group
@@ -53,12 +51,19 @@ class ExtremumSeekingController(Callback):
         
         self.max_update_step = max_update_step
         self.beta = beta
+        self.hpf = hpf
+        self.lpf_a = lpf_a
         
         # Controller state variables
         self.model = None
         self._n_iters = 0
-        self._low_pass_filtered_signal = 0.0
-        self._estimated_gradient = 0.0
+        self._Jkm1 = 0.0 # Objective function at the previous timestep
+        self._sigmakm1 = 0.0 # High-pass filter output at the previous timestep
+        self._psikm1 = 0.0 # Demodulated signal at the previous timestep
+        self._gammakm1 = 0.0 # Low-pass filter output at the previous timestep
+        self._uhatkm1 = float(self.initial_snd) # Integrator output at the previous timestep
+        self._akm1 = dither_amplitude # Probe amplitude at the previous timestep
+        self._T = 1.0 # Timestep size (delta_T) - you may need to adjust this based on your system's loop time.
 
     def on_setup(self):
         """Initializes the controller and logs hyperparameters."""
@@ -72,6 +77,8 @@ class ExtremumSeekingController(Callback):
             "low_pass_filter_alpha": self.low_pass_filter_alpha,
             "max_update_step": self.max_update_step,
             "beta": self.beta,
+            "hpf": self.hpf,
+            "lpf_a": self.lpf_a
         }
         self.experiment.logger.log_hparams(**hparams)
 
@@ -88,74 +95,90 @@ class ExtremumSeekingController(Callback):
         else:
             print(f"\nWARNING: A compatible model was not found for group '{self.control_group}'. Disabling controller.\n")
             self.model = None
-    
+
     def on_evaluation_end(self, rollouts: List[TensorDictBase]):
         if self.model is None:
             return
         logs_to_push = {}
-
+        
         # 1. Collect rewards + compute actual diversity for logging
         episode_rewards = []
-        episode_diversity = []
-
         with torch.no_grad():
             for r in rollouts:
-                # Total reward
                 reward_key = ('next', self.control_group, 'reward')
                 total_reward = r.get(reward_key).sum().item() if reward_key in r.keys(include_nested=True) else 0
                 episode_rewards.append(total_reward)
-
-                # Behavioral diversity (just for logging, not control)
-                obs = r.get((self.control_group, "observation"))
-                agent_actions = []
-                for i in range(self.model.n_agents):
-                    temp_td = TensorDict({
-                        (self.control_group, "observation"): obs
-                    }, batch_size=obs.shape[:-1])
-                    action_td = self.model._forward(temp_td, agent_index=i, compute_estimate=False)
-                    agent_actions.append(action_td.get(self.model.out_key))
-                diversity_tensor = compute_behavioral_distance(agent_actions, just_mean=False)
-                episode_diversity.append(diversity_tensor.mean().item())
 
         if not episode_rewards:
             print("\nWARNING: No episode rewards found. Cannot update controller.\n")
             self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
             return
 
-        mean_reward = np.mean(episode_rewards)
-        mean_diversity = np.mean(episode_diversity) if episode_diversity else 0.0
-
-        # 2. ESC core logic (reward-based)
+        Jk = np.mean(episode_rewards)
         self._n_iters += 1
-        dither_signal = self.dither_amplitude * np.sin(self.dither_frequency * self._n_iters)
-
-        demodulated_signal = mean_reward * dither_signal
-
-        self._low_pass_filtered_signal = (
-            (1 - self.low_pass_filter_alpha) * self._low_pass_filtered_signal +
-            self.low_pass_filter_alpha * demodulated_signal
-        )
-
-        self._estimated_gradient += self.integral_gain * self._low_pass_filtered_signal
-        update_step = self._estimated_gradient
-        update_step_clamped = self.max_update_step * np.tanh(update_step / self.max_update_step)
-
+        
+        # 2. Call the core ES function
+        (
+            uk, 
+            sigmak, 
+            psik, 
+            gammak, 
+            uhatk, 
+            ak
+        ) = self._run_es_step(Jk)
+        
         # 3. Update diversity parameter
-        new_diversity = self.initial_snd + dither_signal + update_step_clamped
-        self.model.desired_snd[:] = torch.clamp(torch.tensor(new_diversity), min=0.0)
+        self.model.desired_snd[:] = torch.clamp(torch.tensor(uk), min=0.0)
 
         print(f"[ESC] Updated SND: {self.model.desired_snd.item()} "
-            f"(Reward: {mean_reward:.3f}, Diversity: {mean_diversity:.3f}, Update Step: {update_step_clamped:.4f})")
+              f"(Reward: {Jk:.3f}, Update Step: {uk - self._uhatkm1:.4f})")
 
         # 4. Logging
         logs_to_push.update({
-            "esc/mean_reward": mean_reward,
-            "esc/diversity_actual": mean_diversity,
-            "esc/diversity_target": self.model.desired_snd.item(),
-            "esc/dither_signal": dither_signal,
-            "esc/demodulated_signal": demodulated_signal,
-            "esc/low_pass_filtered_signal": self._low_pass_filtered_signal,
-            "esc/estimated_gradient": self._estimated_gradient,
-            "esc/update_step_clamped": update_step_clamped,
+            "esc/mean_reward": Jk,
+            "esc/diversity_target": uk,
+            "esc/sigmak": sigmak,
+            "esc/psik": psik,
+            "esc/gammak": gammak,
+            "esc/uhatk": uhatk,
+            "esc/ak": ak,
+            "esc/update_step": uk - self._uhatkm1
         })
         self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
+
+        # 5. Update state for the next timestep
+        self._Jkm1 = Jk
+        self._sigmakm1 = sigmak
+        self._psikm1 = psik
+        self._gammakm1 = gammak
+        self._uhatkm1 = uhatk
+        self._akm1 = ak
+    
+    def _run_es_step(self, Jk: float):
+        """
+        Calculates the next control signal using the core ES function.
+        """
+        t = self._n_iters * self._T
+        w = 2 * np.pi * self.dither_frequency
+        
+        # High-pass filter
+        sigmak = (Jk - self._Jkm1 - (self.hpf * self._T / 2 - 1) * self._sigmakm1) / (1 + self.hpf * self._T / 2)
+
+        # Demodulation
+        psik = sigmak * np.cos(w * t)
+
+        # Low-pass filter
+        gammak = (self._T * self.low_pass_filter_alpha * (psik + self._psikm1) - (self._T * self.low_pass_filter_alpha - 2) * self._gammakm1) / (2 + self._T * self.low_pass_filter_alpha)
+        
+        # Probe amplitude adaptation
+        # Note: The original formula has an error. It should likely use a different form for the low-pass filter,
+        # but to match the provided function, we'll implement it as is.
+        ak = self.beta * (self._T * self.lpf_a * ((np.arctan(psik) / np.pi * 2)**2 + (np.arctan(self._psikm1) / np.pi * 2)**2)) - (self._T * self.lpf_a - 2) * self._akm1 / (2 + self._T * self.lpf_a)
+
+        # Integrator
+        uhatk = self._uhatkm1 + self.integral_gain * self._T / 2 * (gammak + self._gammakm1)
+
+        # Modulation
+        uk = uhatk + ak * np.cos(w * t)
+        
+        return (uk, sigmak, psik, gammak, uhatk, ak)
