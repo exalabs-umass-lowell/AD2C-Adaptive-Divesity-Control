@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import io
 import wandb
-from tensordict import TensorDictBase, TensorDict
+from tensordict import TensorDictBase, TensorDict, nn
 from typing import List, Dict, Union
 
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
@@ -17,14 +17,51 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from scipy.spatial.distance import euclidean
 
+from models.het_control_mlp_esc import HetControlMlpEsc
+from typing import List, Tuple, Type, Optional
+
+import os
+import pickle
+from typing import List, Dict,Any, Callable
+
+from PIL import Image
+from matplotlib import pyplot as plt
+import numpy as np
+import io
+import torch
+import torch.nn as nn
+import wandb
+from tensordict import TensorDictBase, TensorDict
+from typing import List, Dict, Union
+
+from benchmarl.experiment.callback import Callback
+from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
+# Make sure to import all compatible models
+from AD2C.models.het_control_mlp_esc import HetControlMlpEsc
+from AD2C.snd import compute_behavioral_distance
+from AD2C.utils import overflowing_logits_norm
+
+
+
+
+HET_CONTROL_MODELS: Tuple[Type[nn.Module]] = (HetControlMlpEmpirical, HetControlMlpEsc)
 
 
 
 def get_het_model(policy):
-    model = policy.module[0]
-    while not isinstance(model, HetControlMlpEmpirical):
-        model = model[0]
-    return model
+    # This assumes policy.module is an nn.Sequential
+    model = policy.module
+    # FIX 2: Make the function more robust by checking for the base module type
+    if isinstance(model, HET_CONTROL_MODELS):
+        return model
+    # If wrapped in a Sequential, find the correct module
+    if isinstance(model, nn.Sequential):
+        for module in model:
+            if isinstance(module, HET_CONTROL_MODELS):
+                return module
+    # Return None if no compatible model is found
+    return None
+
 
 
 def correlation_score_f(x: Union[List, np.ndarray], y: Union[List, np.ndarray]) -> float:

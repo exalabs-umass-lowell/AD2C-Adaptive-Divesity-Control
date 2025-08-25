@@ -101,56 +101,55 @@ class HetControlMlpEsc(Model):
             num_cells=self.num_cells,
         )
 
-        def _perform_checks(self):
-            super()._perform_checks()
+    # INDENTATION FIX: Moved this method out of __init__ to the class level
+    def _perform_checks(self):
+        super()._perform_checks()
 
-            if self.centralised or not self.input_has_agent_dim:
-                raise ValueError(f"{self.__class__.__name__} can only be used for policies")
+        if self.centralised or not self.input_has_agent_dim:
+            raise ValueError(f"{self.__class__.__name__} can only be used for policies")
 
-            # Run some checks
-            if self.input_has_agent_dim and self.input_leaf_spec.shape[-2] != self.n_agents:
-                raise ValueError(
-                    "If the MLP input has the agent dimension,"
-                    " the second to last spec dimension should be the number of agents"
-                )
-            if (
-                self.output_has_agent_dim
-                and self.output_leaf_spec.shape[-2] != self.n_agents
-            ):
-                raise ValueError(
-                    "If the MLP output has the agent dimension,"
-                    " the second to last spec dimension should be the number of agents"
-                )
+        if self.input_has_agent_dim and self.input_leaf_spec.shape[-2] != self.n_agents:
+            raise ValueError(
+                "If the MLP input has the agent dimension,"
+                " the second to last spec dimension should be the number of agents"
+            )
+        if (
+            self.output_has_agent_dim
+            and self.output_leaf_spec.shape[-2] != self.n_agents
+        ):
+            raise ValueError(
+                "If the MLP output has the agent dimension,"
+                " the second to last spec dimension should be the number of agents"
+            )
 
     def _forward(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
 
         # --- 1. Perform ESC Update if Reward is Available ---
-        # This assumes the forward pass is called during loss computation
-        # on a tensordict that contains the reward from the previous step.
-        reward_key = ("next", "reward") # A common key for reward in TorchRL
+        reward_key = ("next", "reward")
         if reward_key in tensordict.keys(include_nested=True) and torch.is_grad_enabled():
             with torch.no_grad():
-                # Objective J is the mean reward across the batch and agents
                 reward = tensordict.get(reward_key)
                 J = reward.mean()
-
-                # Demodulation: Multiply objective by last dither to get gradient estimate
                 gradient_estimate = J * self.last_dither
+                k_hat_update = self.esc_gain * gradient_estimate
 
-                # Integration: Update the estimate of the optimal scaling factor k_hat
-                self.k_hat.add_(self.esc_gain * gradient_estimate)
+                # --- PROPER LOGGING ---
+                # Log the internal state of the ESC controller
+                tensordict.set((self.agent_group, "esc_reward_J"), J.expand(tensordict.get_item_shape(self.agent_group)))
+                tensordict.set((self.agent_group, "esc_grad_estimate"), gradient_estimate.expand(tensordict.get_item_shape(self.agent_group)))
+                tensordict.set((self.agent_group, "esc_k_hat_update"), k_hat_update.expand(tensordict.get_item_shape(self.agent_group)))
+                # --- END LOGGING ---
+
+                self.k_hat.add_(k_hat_update)
 
 
         # --- 2. Generate New Scaling Ratio from ESC ---
         with torch.no_grad():
             self.time_step += 1
-            # Dither signal: a * sin(ωt)
             current_dither = self.esc_amplitude * torch.sin(
                 self.esc_frequency * self.time_step.float()
             )
-            # Perturb k_hat to get the current scaling ratio
             scaling_ratio = self.k_hat + current_dither
-            # Store the dither for the next update step
             self.last_dither[:] = current_dither
 
 
@@ -183,6 +182,13 @@ class HetControlMlpEsc(Model):
             (self.agent_group, "scaling_ratio"),
             scaling_ratio.expand_as(out),
         )
+        # --- PROPER LOGGING ---
+        # Log the dither signal
+        tensordict.set(
+            (self.agent_group, "esc_dither"),
+            current_dither.expand(tensordict.get_item_shape(self.agent_group))
+        )
+        # --- END LOGGING ---
         tensordict.set((self.agent_group, "logits"), out)
         tensordict.set((self.agent_group, "out_loc_norm"), out_loc_norm)
         tensordict.set(self.out_key, out)
@@ -190,7 +196,6 @@ class HetControlMlpEsc(Model):
         return tensordict
 
     def process_shared_out(self, logits: torch.Tensor):
-        # (This method is unchanged from the original class)
         if not self.probabilistic and self.process_shared:
             return squash(
                 logits,

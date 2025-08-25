@@ -20,79 +20,100 @@ from typing import List, Dict, Union
 
 from benchmarl.experiment.callback import Callback
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
+# Make sure to import all compatible models
+from AD2C.models.het_control_mlp_esc import HetControlMlpEsc
 from AD2C.snd import compute_behavioral_distance
 from AD2C.utils import overflowing_logits_norm
 
-HET_CONTROL_MODELS: Tuple[Type[HetControlMlpEmpirical]] = (HetControlMlpEmpirical,)
+
+# FIX 2: Define a tuple of all compatible heterogeneous models
+HET_CONTROL_MODELS: Tuple[Type[nn.Module]] = (HetControlMlpEmpirical, HetControlMlpEsc)
 
 def get_het_model(policy):
-    model = policy.module[0]
-    while not isinstance(model, HetControlMlpEmpirical):
-        model = model[0]
-    return model
+    # This assumes policy.module is an nn.Sequential
+    model = policy.module
+    # FIX 2: Make the function more robust by checking for the base module type
+    if isinstance(model, HET_CONTROL_MODELS):
+        return model
+    # If wrapped in a Sequential, find the correct module
+    if isinstance(model, nn.Sequential):
+        for module in model:
+            if isinstance(module, HET_CONTROL_MODELS):
+                return module
+    # Return None if no compatible model is found
+    return None
 
-
-# class SndCallback(Callback):
-#     """
-#     Callback used to compute SND during evaluations
-#     """
-#     def on_evaluation_end(self, results: dict):
-#         if "evaluation_rollouts" not in results:
-#             return
-#         rollouts = results["evaluation_rollouts"]
-
-#         for group in self.experiment.group_map.keys():
-#             if len(self.experiment.group_map.get(group, [])) <= 1:
-#                 continue
-
-#             policy = self.experiment.group_policies[group]
-#             model = get_het_model(policy)
-#             if model is None:
-#                 continue
-
-#             key = (group, "observation")
-#             if key not in rollouts[0].keys(include_nested=True):
-#                 continue
-#             obs = torch.cat([rollout.get(key) for rollout in rollouts], dim=0)
-
-#             # This calls the model once for all agents, assuming the model can handle it.
-#             # If model._forward requires agent_index, the loop is necessary but this is a better pattern.
-#             with torch.no_grad():
-#                 # This assumes the model's forward pass can be done without an agent_index
-#                 # to get all actions at once. This is a significant performance improvement.
-#                 td_out = model._forward(obs, compute_estimate=False)
-#                 agent_actions = td_out.get(model.out_key)
-
-#             distance = compute_behavioral_distance(agent_actions, just_mean=True)
-#             self.experiment.logger.log(
-#                 {f"eval/{group}/snd": distance.mean().item()},
-#                 step=self.experiment.n_iters_performed,
-#             )
-
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from scipy.spatial.distance import euclidean
-
-from .utils import get_het_model
 
 class NormLoggerCallback(Callback):
     """Callback to log some training metrics"""
     def on_batch_collected(self, batch: TensorDictBase):
         for group in self.experiment.group_map.keys():
+            # FIX: Added the new ESC controller keys to this list
             keys_to_norm = [
-                (group, "f"), (group, "g"), (group, "fdivg"),
-                (group, "logits"), (group, "observation"),
-                (group, "out_loc_norm"), (group, "estimated_snd"), (group, "scaling_ratio"),
+                # Original keys
+                (group, "logits"), 
+                (group, "observation"),
+                (group, "out_loc_norm"), 
+                (group, "estimated_snd"), 
+                (group, "scaling_ratio"),
+                # New keys for the ESC model
+                (group, "k_hat"),
+                (group, "esc_dither"),
+                (group, "esc_reward_J"),
+                (group, "esc_grad_estimate"),
+                (group, "esc_k_hat_update"),
             ]
             to_log = {}
             for key in keys_to_norm:
                 value = batch.get(key, None)
                 if value is not None:
+                    # This will create log names like "collection/agents/k_hat" in W&B
                     to_log[f"collection/{'/'.join(key)}"] = torch.mean(value).item()
+            
             if to_log:
                 self.experiment.logger.log(to_log, step=self.experiment.n_iters_performed)
 
+class SndLoggingCallback(Callback):
+    """
+    Callback used to compute SND during evaluations.
+    """
+
+    def on_evaluation_end(self, rollouts: List[TensorDictBase]):
+        for group in self.experiment.group_map.keys():
+            if not len(self.experiment.group_map[group]) > 1:
+                # If agent group has 1 agent, skip
+                continue
+
+            policy = self.experiment.group_policies[group]
+            model = get_het_model(policy)
+
+            # FIX 1: Add a check to ensure the model was found before using it.
+            if model is None:
+                continue # Skip this group if no compatible model is found
+
+            # Cat observations over time from all rollouts
+            obs = torch.cat(
+                [rollout.get((group, "observation")) for rollout in rollouts], dim=0
+            )  # tensor of shape [*batch_size, n_agents, n_features]
+
+            # FIX 2: Use a single, vectorized forward pass, not a loop.
+            with torch.no_grad():
+                # Create a tensordict for the input
+                td_in = TensorDict({model.in_key: obs}, batch_size=obs.shape[:-2])
+
+                # A single forward pass gets actions for all agents
+                td_out = model._forward(td_in, agent_index=None, compute_estimate=False)
+
+                # The output shape is [batch, n_agents, action_dim]
+                agent_actions = td_out.get(model.out_key)
+
+            # Compute SND
+            distance = compute_behavioral_distance(agent_actions, just_mean=True)
+            self.experiment.logger.log(
+                {f"eval/{group}/snd": distance.mean().item()},
+                step=self.experiment.n_iters_performed,
+            )
+            
 class TagCurriculum(Callback):
     """Tag curriculum used to freeze the green agents' policies during training"""
     def __init__(self, simple_tag_freeze_policy_after_frames, simple_tag_freeze_policy):
@@ -107,9 +128,9 @@ class TagCurriculum(Callback):
             simple_tag_freeze_policy=self.simple_tag_freeze_policy,
         )
         policy = self.experiment.group_policies["agents"]
-        # FIX 2: Correctly call the new get_het_model function.
         model = get_het_model(policy)
-        if model is not None:
+        # Only set desired_snd if the model is the DiCo model
+        if isinstance(model, HetControlMlpEmpirical):
             model.desired_snd[:] = 0
 
     def on_batch_collected(self, batch: TensorDictBase):
@@ -136,7 +157,6 @@ class ActionSpaceLoss(Callback):
         if not self.use_action_loss:
             return TensorDict({}, [])
         policy = self.experiment.group_policies[group]
-        # FIX 2: Correctly call the new get_het_model function.
         model = get_het_model(policy)
         if model is None:
             return TensorDict({}, [])
@@ -234,7 +254,8 @@ class HetControlMetricsCallback(Callback):
             return
         for group, policy in self.experiment.group_policies.items():
             model_instance = get_het_model(policy)
-            if model_instance:
+            # Only initialize PID for the DiCo model
+            if isinstance(model_instance, HetControlMlpEmpirical):
                 self.pid_updater = PIDHetControlUpdater(
                     model=model_instance, kp=self.kp, ki=self.ki, kd=self.kd,
                     initial_snd=self.initial_snd, baseline_update_rate_alpha=self.alpha,
@@ -266,18 +287,16 @@ class HetControlMetricsCallback(Callback):
                 continue
             obs = torch.cat([rollout.get(key) for rollout in rollouts], dim=0)
 
-            # NOTE: This part remains a loop because the model's _forward pass
-            # is designed to take an agent_index. A fully vectorized model
-            # would be more performant, but this is correct for this model design.
-            agent_actions_list = []
+            # FIX 1: Replace the loop with a single vectorized call to the model
             with torch.no_grad():
-                for i in range(model.n_agents):
-                    td_out = model._forward(obs, agent_index=i, compute_estimate=False)
-                    agent_actions_list.append(td_out.get(model.out_key))
-            
-            # The function expects a list of tensors, where each tensor is (batch, actions)
-            # This is already the format of agent_actions_list
-            actual_snd = compute_behavioral_distance(agent_actions_list, just_mean=True)
+                td_in = TensorDict({model.in_key: obs}, batch_size=obs.shape[:-2])
+                # A single forward pass gets actions for all agents
+                td_out = model._forward(td_in, agent_index=None, compute_estimate=False)
+                # The output shape is [batch, n_agents, action_dim]
+                agent_actions = td_out.get(model.out_key)
+
+            # This now correctly computes SND on the vectorized output
+            actual_snd = compute_behavioral_distance(agent_actions, just_mean=True)
             snds_per_group[group] = actual_snd.mean().item()
             logs_to_push[f"eval/{group}/snd_actual"] = snds_per_group[group]
 
@@ -285,11 +304,10 @@ class HetControlMetricsCallback(Callback):
                 logs_to_push[f"eval/{group}/desired_snd_used"] = model.desired_snd.item()
                 if hasattr(model, 'estimated_snd'):
                     logs_to_push[f"eval/{group}/estimated_snd"] = model.estimated_snd.item()
-        print("SND per group:", snds_per_group)
+
         if self.pid_updater is not None:
-            print("\nPID Controller Update Step:")
-            # FIX 5: Use the correct key for the reward metric.
-            reward_key = "collection/reward/episode_reward_mean"
+            # FIX 3: Use a standard reward key. Check results.keys() to confirm!
+            reward_key = "mean_reward"
             if reward_key in results and self.pid_group in snds_per_group:
                 current_performance = results[reward_key]
                 actual_snd_for_pid = snds_per_group[self.pid_group]
@@ -299,10 +317,9 @@ class HetControlMetricsCallback(Callback):
                 )
                 logs_to_push.update(pid_logs)
             else:
-                print(f"\nWARNING: '{reward_key}' or group SND not found in results. PID Controller cannot update.\n")
+                print(f"\nWARNING: '{reward_key}' not found in results.keys() or group SND not found. PID Controller cannot update.\n")
+                # Optional: print available keys for debugging
+                # print("Available keys in evaluation results:", results.keys())
 
         if logs_to_push:
-            print("Log Pushed:", logs_to_push)
             self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
-
-

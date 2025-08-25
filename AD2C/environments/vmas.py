@@ -14,87 +14,74 @@ from AD2C.snd import compute_behavioral_distance
 def render_callback(experiment, env: EnvBase, data: TensorDictBase):
     """
     Render callback that visualizes diversity (SND) across positions.
-
-    VMAS's renderer passes a batch of positions with shape (N, 2) and expects
-    a return array of shape (N,). We compute one SND per joint observation
-    (shape M), then expand it back to per-position length N.
     """
-    policy = experiment.group_policies["agents"]
+    policy = experiment.group_policies.get("agents")
+    if not policy:
+        # If there's no policy for the 'agents' group, do nothing.
+        return env.render(mode="rgb_array")
+
     model = get_het_model(policy)
+
+    # FIX 1: Add a check to ensure the model was found before using it.
+    if model is None:
+        # If no compatible model is found, render the environment normally
+        # without the diversity overlay.
+        return env.render(mode="rgb_array")
+
     env_index = 0
 
     # Resolve device
-    try:
-        device = model.device
-    except AttributeError:
-        device = next(model.parameters()).device
-
+    device = next(model.parameters()).device
     n_agents = env.n_agents
 
-    def snd(pos):
+    def snd(pos: np.ndarray):
         """
-        pos: np.ndarray or torch.Tensor with shape (N, 2) or (2,)
+        Computes the SND for a given set of grid positions.
+        pos: np.ndarray with shape (N, 2)
         return: np.ndarray with shape (N,)
         """
-        # Ensure tensor, batch-first
         pos_t = torch.as_tensor(pos, dtype=torch.float32, device=device)
-        if pos_t.dim() == 1:
-            pos_t = pos_t.unsqueeze(0)  # (1, 2)
         N = pos_t.shape[0]
 
-        # Build observations for all positions (VMAS groups positions into joint obs)
+        # Build observations for all positions
         obs_raw = env.scenario.observation_from_pos(pos_t, env_index=env_index)
-        # Reshape to (M, n_agents, obs_dim)
         obs = obs_raw.view(-1, n_agents, obs_raw.shape[-1]).to(torch.float32)
         M = obs.shape[0]
 
-        # Create TensorDict for batch of joint observations
+        if M == 0:
+            return np.zeros(N)
+
+        # Create a TensorDict for the batch of observations
         obs_td = TensorDict(
-            {"agents": TensorDict({"observation": obs}, batch_size=[M, n_agents])},
+            {"agents": {"observation": obs}},
             batch_size=[M],
             device=device,
         )
 
-        # Forward all agents on the same batch
-        agent_actions = []
-        for i in range(model.n_agents):
-            out_td = model._forward(obs_td, agent_index=i)
-            agent_actions.append(out_td.get(model.out_key))  # shape (M, action_dim)
+        with torch.no_grad():
+            # FIX 2: Perform a single, vectorized forward pass to get all actions
+            td_out = model._forward(obs_td, agent_index=None, compute_estimate=False)
+            # The output shape is [batch, n_agents, action_dim]
+            agent_actions = td_out.get(("agents", model.out_key))
 
-        # Compute SND per joint observation -> shape (M,)
-        distances = compute_behavioral_distance(agent_actions, just_mean=True)  # (M,)
+        # Compute SND for each joint observation in the batch -> shape (M,)
+        distances = compute_behavioral_distance(agent_actions, just_mean=True)
 
-        # Expand to per-position length N
-        # Typically, N == M * n_agents (one pos per agent). Use integer factor to be safe.
-        if M > 0:
-            factor = N // M
-        else:
-            factor = 1  # degenerate but avoids div-by-zero
+        # FIX 3: Simplify the reshaping logic.
+        # Each of the M joint observations corresponds to n_agents individual positions.
+        # We repeat each SND value n_agents times to match the input position shape.
+        distances_expanded = distances.repeat_interleave(n_agents)
 
-        # If factor is not an integer multiple of n_agents for some scenario,
-        # repeat_interleave with computed factor to match N.
-        distances_expanded = distances.repeat_interleave(factor)  # shape (M * factor,)
-
-        # Final guard: if still mismatched (due to any scenario-specific packing), resize safely.
+        # Final guard for edge cases where N might not be M * n_agents
         if distances_expanded.shape[0] != N:
-            # Try to match exactly by trimming or repeating as needed.
-            if distances_expanded.shape[0] > N:
-                distances_expanded = distances_expanded[:N]
-            else:
-                # Pad by repeating last value
-                pad = N - distances_expanded.shape[0]
-                distances_expanded = torch.cat(
-                    [distances_expanded, distances_expanded[-1:].repeat(pad)]
-                )
-        # print("N positions:", N, "M obs:", M, "factor:", factor, flush=True)
-        
-        # Return numpy array of shape (N,)
-        return distances_expanded.detach().cpu().numpy()
+            distances_expanded = torch.cat([distances_expanded, torch.zeros(N - distances_expanded.shape[0], device=device)])
 
-    # Render with SND overlay
+        return distances_expanded.cpu().numpy()
+
+    # Render the environment with the SND heatmap overlay
     return env.render(
         mode="rgb_array",
-        visualize_when_rgb=False,
+        visualize_when_rgb=True, # Ensure visualization is on
         plot_position_function=snd,
         plot_position_function_range=1.5,
         plot_position_function_cmap_alpha=0.5,
