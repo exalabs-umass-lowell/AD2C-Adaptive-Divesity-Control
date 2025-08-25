@@ -111,7 +111,7 @@ def hydra_main(cfg: DictConfig) -> None:
             
     # Callbacks for the experiment
     callbacks = [
-        SndLoggingCallback(),
+        # SndLoggingCallback(),
         NormLoggerCallback(),
         ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
     ]

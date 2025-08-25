@@ -181,7 +181,6 @@ class HetControlMlpEsc(Model):
             (self.agent_group, "scaling_ratio"),
             scaling_ratio.expand_as(out),
         )
-        # --- PROPER LOGGING ---
         # Log the dither signal
         tensordict.set(
             (self.agent_group, "esc_dither"),
