@@ -25,24 +25,11 @@ from AD2C.models.het_control_mlp_esc import HetControlMlpEsc
 from AD2C.snd import compute_behavioral_distance
 from AD2C.utils import overflowing_logits_norm
 
+from .utils import get_het_model
+
 
 # FIX 2: Define a tuple of all compatible heterogeneous models
 HET_CONTROL_MODELS: Tuple[Type[nn.Module]] = (HetControlMlpEmpirical, HetControlMlpEsc)
-
-def get_het_model(policy):
-    # This assumes policy.module is an nn.Sequential
-    model = policy.module
-    # FIX 2: Make the function more robust by checking for the base module type
-    if isinstance(model, HET_CONTROL_MODELS):
-        return model
-    # If wrapped in a Sequential, find the correct module
-    if isinstance(model, nn.Sequential):
-        for module in model:
-            if isinstance(module, HET_CONTROL_MODELS):
-                return module
-    # Return None if no compatible model is found
-    return None
-
 
 class NormLoggerCallback(Callback):
     """Callback to log some training metrics"""
@@ -80,31 +67,38 @@ class SndLoggingCallback(Callback):
 
     def on_evaluation_end(self, rollouts: List[TensorDictBase]):
         for group in self.experiment.group_map.keys():
-            if not len(self.experiment.group_map[group]) > 1:
+            if not len(self.experiment.group_map.get(group, [])) > 1:
                 # If agent group has 1 agent, skip
                 continue
 
-            policy = self.experiment.group_policies[group]
+            policy = self.experiment.group_policies.get(group)
+            if policy is None:
+                continue
+
             model = get_het_model(policy)
 
-            # FIX 1: Add a check to ensure the model was found before using it.
             if model is None:
-                continue # Skip this group if no compatible model is found
+                continue # Skip if no compatible model found
 
             # Cat observations over time from all rollouts
             obs = torch.cat(
                 [rollout.get((group, "observation")) for rollout in rollouts], dim=0
-            )  # tensor of shape [*batch_size, n_agents, n_features]
+            )
 
-            # FIX 2: Use a single, vectorized forward pass, not a loop.
             with torch.no_grad():
-                # Create a tensordict for the input
-                td_in = TensorDict({model.in_key: obs}, batch_size=obs.shape[:-2])
+                # FIX: Create the TensorDict with the correct nested structure
+                td_in = TensorDict({
+                    group: {
+                        "observation": obs
+                    }
+                }, batch_size=obs.shape[:-2])
+
 
                 # A single forward pass gets actions for all agents
                 td_out = model._forward(td_in, agent_index=None, compute_estimate=False)
 
-                # The output shape is [batch, n_agents, action_dim]
+                # FIX: Retrieve the output from the correct nested key
+                # model.out_key is a tuple, e.g., ('agents', 'action')
                 agent_actions = td_out.get(model.out_key)
 
             # Compute SND

@@ -17,20 +17,15 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
     """
     policy = experiment.group_policies.get("agents")
     if not policy:
-        # If there's no policy for the 'agents' group, do nothing.
         return env.render(mode="rgb_array")
 
     model = get_het_model(policy)
 
-    # FIX 1: Add a check to ensure the model was found before using it.
     if model is None:
-        # If no compatible model is found, render the environment normally
-        # without the diversity overlay.
+        # If no compatible model is found, render the environment normally.
         return env.render(mode="rgb_array")
 
     env_index = 0
-
-    # Resolve device
     device = next(model.parameters()).device
     n_agents = env.n_agents
 
@@ -43,7 +38,6 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
         pos_t = torch.as_tensor(pos, dtype=torch.float32, device=device)
         N = pos_t.shape[0]
 
-        # Build observations for all positions
         obs_raw = env.scenario.observation_from_pos(pos_t, env_index=env_index)
         obs = obs_raw.view(-1, n_agents, obs_raw.shape[-1]).to(torch.float32)
         M = obs.shape[0]
@@ -51,7 +45,6 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
         if M == 0:
             return np.zeros(N)
 
-        # Create a TensorDict for the batch of observations
         obs_td = TensorDict(
             {"agents": {"observation": obs}},
             batch_size=[M],
@@ -59,29 +52,33 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
         )
 
         with torch.no_grad():
-            # FIX 2: Perform a single, vectorized forward pass to get all actions
             td_out = model._forward(obs_td, agent_index=None, compute_estimate=False)
-            # The output shape is [batch, n_agents, action_dim]
-            agent_actions = td_out.get(("agents", model.out_key))
+            agent_actions = td_out.get(model.out_key)
 
-        # Compute SND for each joint observation in the batch -> shape (M,)
         distances = compute_behavioral_distance(agent_actions, just_mean=True)
-
-        # FIX 3: Simplify the reshaping logic.
-        # Each of the M joint observations corresponds to n_agents individual positions.
-        # We repeat each SND value n_agents times to match the input position shape.
         distances_expanded = distances.repeat_interleave(n_agents)
 
-        # Final guard for edge cases where N might not be M * n_agents
-        if distances_expanded.shape[0] != N:
-            distances_expanded = torch.cat([distances_expanded, torch.zeros(N - distances_expanded.shape[0], device=device)])
-
-        return distances_expanded.cpu().numpy()
+        # --- START FIX ---
+        # This logic robustly handles cases where distances_expanded is either
+        # smaller or larger than N, preventing the negative dimension error.
+        
+        # 1. Create a correctly-sized tensor of zeros.
+        final_distances = torch.zeros(N, device=device)
+        
+        # 2. Determine how many elements to copy over.
+        num_to_copy = min(N, distances_expanded.shape[0])
+        
+        # 3. Copy the computed distances, effectively truncating if too large
+        #    or leaving zero-padding if too small.
+        final_distances[:num_to_copy] = distances_expanded[:num_to_copy]
+        
+        return final_distances.cpu().numpy()
+        # --- END FIX ---
 
     # Render the environment with the SND heatmap overlay
     return env.render(
         mode="rgb_array",
-        visualize_when_rgb=True, # Ensure visualization is on
+        visualize_when_rgb=False,
         plot_position_function=snd,
         plot_position_function_range=1.5,
         plot_position_function_cmap_alpha=0.5,

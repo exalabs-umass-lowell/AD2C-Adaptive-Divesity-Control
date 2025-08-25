@@ -11,6 +11,9 @@ seed: 0
 use_action_loss: True
 action_loss_lr: 0.00003
 
+model:
+  - name: hetcontrolmlpesc
+
 callbacks_for_run: 
   # - het_control_mlp_empirical
   - het_control_mlp_esc

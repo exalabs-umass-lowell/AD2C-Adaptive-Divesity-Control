@@ -101,7 +101,6 @@ class HetControlMlpEsc(Model):
             num_cells=self.num_cells,
         )
 
-    # INDENTATION FIX: Moved this method out of __init__ to the class level
     def _perform_checks(self):
         super()._perform_checks()
 
