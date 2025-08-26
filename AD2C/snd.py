@@ -35,9 +35,11 @@ def compute_behavioral_distance(
             pair_results.append(
                 compute_statistical_distance(out_i, out_j, just_mean=just_mean)
             )
+    
+    # torch.stack correctly assembles the results into shape [*batch, n_pairs].
+    # The buggy .view() call has been removed.
     result = torch.stack(pair_results, dim=-1)
-    n_pairs = (n_agents * (n_agents - 1)) // 2
-    return result.view((*agent_actions[0].shape[:-1], n_pairs))
+    return result
 
 
 def compute_statistical_distance(logits_i, logits_j, just_mean: bool):
@@ -60,7 +62,9 @@ def compute_statistical_distance(logits_i, logits_j, just_mean: bool):
         just_mean=just_mean,
     )
 
-    return out.view(logits_i.shape[:-1])
+    # The output of wasserstein_distance is already the correct shape [*batch].
+    # The buggy .view() call has been removed.
+    return out
 
 
 def wasserstein_distance(mean, sigma, mean2, sigma2, just_mean: bool = False):

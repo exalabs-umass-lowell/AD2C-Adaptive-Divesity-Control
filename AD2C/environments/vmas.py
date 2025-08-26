@@ -27,24 +27,29 @@ def render_callback(experiment, env: EnvBase, data: TensorDictBase):
         """
         obs = env.scenario.observation_from_pos(
             torch.tensor(pos, device=model.device), env_index=env_index
-        )  # Get the observation in the scenarip, given the position
+        )
         obs = obs.view(-1, env.n_agents, obs.shape[-1]).to(torch.float)
         obs_td = TensorDict(
             {"agents": TensorDict({"observation": obs}, obs.shape[:2])}, obs.shape[:1]
         )
 
         agent_actions = []
-        # For each agent, get the policy output in this observation
         for i in range(model.n_agents):
             agent_actions.append(
                 model._forward(obs_td, agent_index=i).get(model.out_key)
             )
-        # Compute the SND using the agents' output
-        distance = compute_behavioral_distance(
+        
+        # This function now correctly returns a tensor of shape [batch_size, n_pairs].
+        pairwise_distances = compute_behavioral_distance(
             agent_actions,
             just_mean=True,
-        ).view(-1, 1)
-        return distance
+        )
+        
+        # We can now simply take the mean across the pairs.
+        avg_distance = pairwise_distances.mean(dim=-1)
+
+        # Reshape to the [batch_size, 1] column vector required by the renderer.
+        return avg_distance.view(-1, 1)
 
     return env.render(
         mode="rgb_array",
