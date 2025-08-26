@@ -59,54 +59,6 @@ class NormLoggerCallback(Callback):
             
             if to_log:
                 self.experiment.logger.log(to_log, step=self.experiment.n_iters_performed)
-
-class SndLoggingCallback(Callback):
-    """
-    Callback used to compute SND during evaluations.
-    """
-
-    def on_evaluation_end(self, rollouts: List[TensorDictBase]):
-        for group in self.experiment.group_map.keys():
-            if not len(self.experiment.group_map.get(group, [])) > 1:
-                # If agent group has 1 agent, skip
-                continue
-
-            policy = self.experiment.group_policies.get(group)
-            if policy is None:
-                continue
-
-            model = get_het_model(policy)
-
-            if model is None:
-                continue # Skip if no compatible model found
-
-            # Cat observations over time from all rollouts
-            obs = torch.cat(
-                [rollout.get((group, "observation")) for rollout in rollouts], dim=0
-            )
-
-            with torch.no_grad():
-                # FIX: Create the TensorDict with the correct nested structure
-                td_in = TensorDict({
-                    group: {
-                        "observation": obs
-                    }
-                }, batch_size=obs.shape[:-2])
-
-
-                # A single forward pass gets actions for all agents
-                td_out = model._forward(td_in, agent_index=None, compute_estimate=False)
-
-                # FIX: Retrieve the output from the correct nested key
-                # model.out_key is a tuple, e.g., ('agents', 'action')
-                agent_actions = td_out.get(model.out_key)
-
-            # Compute SND
-            distance = compute_behavioral_distance(agent_actions, just_mean=True)
-            self.experiment.logger.log(
-                {f"eval/{group}/snd": distance.mean().item()},
-                step=self.experiment.n_iters_performed,
-            )
             
 class TagCurriculum(Callback):
     """Tag curriculum used to freeze the green agents' policies during training"""

@@ -32,6 +32,8 @@ from benchmarl.hydra_config import (
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical, HetControlMlpEmpiricalConfig
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc, HetControlMlpEscConfig
 # from AD2C.callback123 import *
+from AD2C.callbacks.SndLogCallback import SndLoggingCallback
+from AD2C.callbacks.traj_loggerCallback import TrajectoryDataLogger
 from AD2C.environments.vmas import render_callback
 
 
@@ -92,7 +94,7 @@ def hydra_main(cfg: DictConfig) -> None:
     algorithm_name = hydra_choices.algorithm
 
     # For the ESC model, you typically run one experiment, not a sweep
-    total_frames = 5_000_000 # Set the total frames for the single run
+    total_frames = 3_000_000 # Set the total frames for the single run
     
     base_save_folder = HydraConfig.get().run.dir
 
@@ -111,7 +113,10 @@ def hydra_main(cfg: DictConfig) -> None:
             
     # Callbacks for the experiment
     callbacks = [
-        # SndLoggingCallback(),
+        SndLoggingCallback(),
+        # TrajectoryDataLogger(
+        #     save_path="/home/svarp/Desktop/Projects/AD2C/Saved Run Tables"
+        #     ),
         NormLoggerCallback(),
         ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
     ]

@@ -122,76 +122,77 @@ class HetControlMlpEsc(Model):
             )
 
     def _forward(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
+        # reward_key = ("next", "reward")
+        reward_key = ("next","agents", "reward")
 
-        # --- 1. Perform ESC Update if Reward is Available ---
-        reward_key = ("next", "reward")
+        # print("Available keys in the tensordict:", tensordict.keys(include_nested=True))
+        # Assuming your previous attempt to fix the logging was to use .mean()
+        # This is where you should revert the fix.  
+
         if reward_key in tensordict.keys(include_nested=True) and torch.is_grad_enabled():
             with torch.no_grad():
                 reward = tensordict.get(reward_key)
-                J = reward.mean()
-                gradient_estimate = J * self.last_dither
+                # Take the mean over the batch dimension, resulting in a shape of (num_agents)
+                J_per_agent = reward.mean(dim=0)
+                
+                # Get the full shape of the tensordict
+                full_shape = tensordict.get(('agents', 'observation')).shape
+                
+                # Expand J_per_agent to the full tensordict shape
+                # Unsqueeze to add a dimension of size 1, then expand.
+                J_expanded = J_per_agent.unsqueeze(0).expand(full_shape)
+                # reward mean Per agent
+                
+                # Calculate the gradient estimate and update
+                # K_hat_update is basically a reward diversity in 
+                gradient_estimate = J_expanded * self.last_dither
                 k_hat_update = self.esc_gain * gradient_estimate
-
-                # --- PROPER LOGGING ---
-                # Log the internal state of the ESC controller
-                tensordict.set((self.agent_group, "esc_reward_J"), J.expand(tensordict.get_item_shape(self.agent_group)))
-                tensordict.set((self.agent_group, "esc_grad_estimate"), gradient_estimate.expand(tensordict.get_item_shape(self.agent_group)))
-                tensordict.set((self.agent_group, "esc_k_hat_update"), k_hat_update.expand(tensordict.get_item_shape(self.agent_group)))
-                # --- END LOGGING ---
-
-                self.k_hat.add_(k_hat_update)
-
-
-        # --- 2. Generate New Scaling Ratio from ESC ---
+                
+                logs = {
+                    (self.agent_group, "esc_reward_J"): J_expanded,
+                    (self.agent_group, "esc_grad_estimate"): gradient_estimate,
+                    (self.agent_group, "esc_k_hat_update"): k_hat_update,
+                    (self.agent_group, "esc_gain"): torch.tensor(self.esc_gain, device=self.device, dtype=torch.float).expand(full_shape),
+                    (self.agent_group, "k_hat_new"): (self.k_hat + k_hat_update.mean()).expand(full_shape),
+                }
+                tensordict.update(logs)
+                
+                self.k_hat.add_(k_hat_update.mean())
+                
         with torch.no_grad():
             self.time_step += 1
-            current_dither = self.esc_amplitude * torch.sin(
-                self.esc_frequency * self.time_step.float()
-            )
+            current_dither = self.esc_amplitude * torch.sin(self.esc_frequency * self.time_step.float())
             scaling_ratio = self.k_hat + current_dither
-            self.last_dither[:] = current_dither
+            self.last_dither.copy_(current_dither)
 
-
-        # --- 3. Standard Policy Forward Pass ---
         input_obs = tensordict.get(self.in_key)
-        shared_out = self.shared_mlp.forward(input_obs)
-        agent_out = self.agent_mlps.forward(input_obs)
-        shared_out = self.process_shared_out(shared_out)
+        shared_out = self.process_shared_out(self.shared_mlp(input_obs))
+        agent_out = self.agent_mlps(input_obs)
 
-        # --- 4. Apply ESC-derived Scaling Ratio ---
+
         if self.probabilistic:
             shared_loc, shared_scale = shared_out.chunk(2, -1)
             agent_loc = shared_loc + agent_out * scaling_ratio
             agent_scale = shared_scale
             out = torch.cat([agent_loc, agent_scale], dim=-1)
+            out_loc_norm = overflowing_logits_norm(agent_loc, self.action_spec[self.agent_group, "action"])
         else:
             out = shared_out + agent_out * scaling_ratio
-        
-        out_loc_norm = overflowing_logits_norm(
-            out.chunk(2,-1)[0] if self.probabilistic else out,
-            self.action_spec[self.agent_group, "action"],
-        )
+            out_loc_norm = overflowing_logits_norm(out, self.action_spec[self.agent_group, "action"])
 
-        # --- 5. Populate TensorDict with outputs and logs ---
-        tensordict.set(
-            (self.agent_group, "k_hat"),
-            self.k_hat.expand(tensordict.get_item_shape(self.agent_group)),
-        )
-        tensordict.set(
-            (self.agent_group, "scaling_ratio"),
-            scaling_ratio.expand_as(out),
-        )
-        # Log the dither signal
-        tensordict.set(
-            (self.agent_group, "esc_dither"),
-            current_dither.expand(tensordict.get_item_shape(self.agent_group))
-        )
-        # --- END LOGGING ---
-        tensordict.set((self.agent_group, "logits"), out)
-        tensordict.set((self.agent_group, "out_loc_norm"), out_loc_norm)
-        tensordict.set(self.out_key, out)
+        shape_out = out.shape
+        logs = {
+            (self.agent_group, "k_hat"): self.k_hat.expand(tensordict.get_item_shape(self.agent_group)),
+            (self.agent_group, "scaling_ratio"): scaling_ratio.expand(shape_out),
+            (self.agent_group, "esc_dither"): current_dither.expand(tensordict.get_item_shape(self.agent_group)),
+            (self.agent_group, "logits"): out,
+            (self.agent_group, "out_loc_norm"): out_loc_norm,
+            self.out_key: out,
+        }
+        tensordict.update(logs)
 
         return tensordict
+
 
     def process_shared_out(self, logits: torch.Tensor):
         if not self.probabilistic and self.process_shared:
