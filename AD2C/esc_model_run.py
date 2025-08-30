@@ -6,18 +6,17 @@ import hydra
 import os
 import torch
 import numpy as np
-import pickle # Added for saving/loading results
-from hydra.core.hydra_config import HydraConfig
+import pickle
+from hydra.utils import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from typing import List
 
-from AD2C.callbacks.pIControllerCallback import *
+from AD2C.callbacks.pIControllerCallback import pIControllerCallback
 from AD2C.callbacks.SndCallback import SndCallback as SndCallbackClass
 from AD2C.callbacks.SimpleProportionalController import SimpleProportionalController
 from AD2C.callbacks.clusterSndCallback import clusterSndCallback
 from AD2C.callbacks.fixed_callbacks import *
 from AD2C.callbacks.clusterLogger import TrajectoryLoggerCallback
-
 
 import benchmarl.models
 from benchmarl.algorithms import *
@@ -50,7 +49,7 @@ def setup(task_name):
 def create_experiment(cfg: DictConfig, callbacks_for_run: List[Callback], run_name: str) -> Experiment:
     hydra_choices = HydraConfig.get().runtime.choices
     task_name = hydra_choices.task
-    algorithm_name = hydra_choices.algorithm # Get algorithm name here
+    algorithm_name = hydra_choices.algorithm
     
     setup(task_name)
     
@@ -72,7 +71,6 @@ def create_experiment(cfg: DictConfig, callbacks_for_run: List[Callback], run_na
         model_config.probabilistic = False
 
     # ---------------------------------------------------------------------
-    # ADDED LOGIC: Set experiment name here
     experiment_config.name = run_name
     # ---------------------------------------------------------------------
 
@@ -94,11 +92,10 @@ def hydra_main(cfg: DictConfig) -> None:
     algorithm_name = hydra_choices.algorithm
 
     # For the ESC model, you typically run one experiment, not a sweep
-    total_frames = 3_000_000 # Set the total frames for the single run
+    total_frames = 3_000_000
     
     base_save_folder = HydraConfig.get().run.dir
 
-    # --- Create a single configuration for the ESC model run ---
     experiment_cfg = OmegaConf.create(cfg)
     
     run_save_folder = os.path.join(base_save_folder, "esc_run")
@@ -113,9 +110,13 @@ def hydra_main(cfg: DictConfig) -> None:
             
     # Callbacks for the experiment
     callbacks = [
+<<<<<<< Updated upstream
         # SndLoggingCallback(
         #     # control_group = "agents",
         #     ),
+=======
+        SndLoggingCallback(),
+>>>>>>> Stashed changes
         TrajectoryLoggerCallback(
                 control_group = "agents",
             ),
