@@ -16,6 +16,7 @@ from AD2C.callbacks.SndCallback import SndCallback as SndCallbackClass
 from AD2C.callbacks.SimpleProportionalController import SimpleProportionalController
 from AD2C.callbacks.clusterSndCallback import clusterSndCallback
 from AD2C.callbacks.fixed_callbacks import *
+from AD2C.callbacks.clusterLogger import TrajectoryLoggerCallback
 
 
 import benchmarl.models
@@ -33,7 +34,6 @@ from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical, HetCon
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc, HetControlMlpEscConfig
 # from AD2C.callback123 import *
 from AD2C.callbacks.SndLogCallback import SndLoggingCallback
-from AD2C.callbacks.traj_loggerCallback import TrajectoryDataLogger
 from AD2C.environments.vmas import render_callback
 
 
@@ -113,7 +113,12 @@ def hydra_main(cfg: DictConfig) -> None:
             
     # Callbacks for the experiment
     callbacks = [
-        SndLoggingCallback(),
+        # SndLoggingCallback(
+        #     # control_group = "agents",
+        #     ),
+        TrajectoryLoggerCallback(
+                control_group = "agents",
+            ),
         # TrajectoryDataLogger(
         #     save_path="/home/svarp/Desktop/Projects/AD2C/Saved Run Tables"
         #     ),

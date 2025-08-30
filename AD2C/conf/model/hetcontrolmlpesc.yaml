@@ -14,10 +14,10 @@ esc_gain: 1
 
 # The amplitude (a) of the dither signal. This is the size of the "jiggle"
 # applied to the scaling factor to probe the performance gradient.
-esc_amplitude: 0.25
+esc_amplitude: 9
 
 # The frequency (ω) of the dither signal. Controls how fast the "jiggle" oscillates.
-esc_frequency: 0.5
+esc_frequency: 1.0
 
 # The initial value for the diversity scaling factor (k_hat). A good starting
 # point for the controller's search.
