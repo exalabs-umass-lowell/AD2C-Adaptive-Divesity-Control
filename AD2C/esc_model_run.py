@@ -112,10 +112,12 @@ def hydra_main(cfg: DictConfig) -> None:
         # SndLoggingCallback(
         #     # control_group = "agents",
         #     ),
-        EscLoggerCallback(),
+        # EscLoggerCallback(
+        #     # control_group = "agents",
+        # ),
         TrajectoryLoggerCallback(
-                control_group = "agents",
-            ),
+            control_group = "agents",
+        ),
         # TrajectoryDataLogger(
         #     save_path="/home/svarp/Desktop/Projects/AD2C/Saved Run Tables"
         #     ),
