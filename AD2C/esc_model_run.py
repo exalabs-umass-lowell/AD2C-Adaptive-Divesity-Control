@@ -34,6 +34,7 @@ from AD2C.models.het_control_mlp_esc import HetControlMlpEsc, HetControlMlpEscCo
 # from AD2C.callback123 import *
 from AD2C.callbacks.SndLogCallback import SndLoggingCallback
 from AD2C.environments.vmas import render_callback
+from AD2C.callbacks.escLoggerCallback import EscLoggerCallback
 
 
 def setup(task_name):
@@ -70,9 +71,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run: List[Callback], run_na
     else:
         model_config.probabilistic = False
 
-    # ---------------------------------------------------------------------
     experiment_config.name = run_name
-    # ---------------------------------------------------------------------
 
     return Experiment(
         task=task_config,
@@ -113,6 +112,7 @@ def hydra_main(cfg: DictConfig) -> None:
         # SndLoggingCallback(
         #     # control_group = "agents",
         #     ),
+        EscLoggerCallback(),
         TrajectoryLoggerCallback(
                 control_group = "agents",
             ),
