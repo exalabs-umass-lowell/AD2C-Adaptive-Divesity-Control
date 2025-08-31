@@ -58,23 +58,36 @@ class TrajectoryLoggerCallback(Callback):
 
     def on_evaluation_end(self, rollouts: List[TensorDictBase]):
         """
-        Calculates actual SND and reward from rollouts, then logs and plots the trajectory.
+        Calculates actual SND and reward from rollouts, then logs metrics and plots.
         """
         if self.model is None:
             return
 
         episode_snd = []
         episode_returns = []
+        plot_generated = False  # Flag to ensure we only plot for one episode
+
+        # 4. Prepare logs for this step (initialize dict before the loop)
+        logs_to_push = {}
 
         # 1. Collect SND and Reward data from all evaluation episodes
         with torch.no_grad():
             for r in rollouts:
                 agent_actions = self._get_agent_actions_for_rollout(r)
                 
-                # Compute the mean diversity (SND) for the episode
+                # Compute the pairwise distances for the episode
                 pairwise_distances = compute_behavioral_distance(agent_actions, just_mean=False)
                 episode_snd.append(pairwise_distances.mean().item())
-                
+
+                # Generate the agent distance plot for the first episode only
+                if not plot_generated:
+                    agent_distance_plot = plot_agent_distances(
+                        pairwise_distances_tensor=pairwise_distances,
+                        n_agents=self.model.n_agents
+                    )
+                    logs_to_push["Trajectory/Agent_Distances"] = agent_distance_plot
+                    plot_generated = True
+
                 # Compute the total return for the episode
                 reward_key = ('next', self.control_group, 'reward')
                 total_reward = r.get(reward_key).sum().item() if reward_key in r.keys(include_nested=True) else 0
@@ -93,11 +106,9 @@ class TrajectoryLoggerCallback(Callback):
         self.eps_mean_returns.append(mean_return)
         self.eps_number.append(self.experiment.n_iters_performed)
 
-        # 4. Prepare logs for this step
-        logs_to_push = {
-            "Trajectory/actual_snd": mean_actual_snd,
-            "Trajectory/mean_return": mean_return,
-        }
+        # Add main trajectory metrics to the log dictionary
+        logs_to_push["Trajectory/actual_snd"] = mean_actual_snd
+        logs_to_push["Trajectory/mean_return"] = mean_return
 
         # 5. Generate and log the trajectory plot if we have enough data
         if len(self.eps_number) > 1:

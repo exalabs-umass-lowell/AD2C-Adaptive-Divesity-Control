@@ -98,25 +98,35 @@ class HetControlMlpEsc(Model):
             return
 
         with torch.no_grad():
+            # Get the reward tensor and its shape, which will be our reference
             reward = tensordict.get(reward_key)
+            target_shape = reward.shape
+
+            # J is the objective function, here approximated by the mean reward per agent
             J_per_agent = reward.mean(dim=0)
             
-            full_shape = tensordict.get(('agents', 'observation')).shape
-            J_expanded = J_per_agent.unsqueeze(0).expand(full_shape)
+            # Expand the agent-wise average reward across the batch dimension
+            # This ensures its shape is compatible for element-wise operations
+            J_expanded = J_per_agent.unsqueeze(0).expand(target_shape)
             
             # Calculate gradient estimate and update k_hat
+            # The gradient is estimated by multiplying the objective by the dither signal
             gradient_estimate = J_expanded * self.last_dither
             k_hat_update = self.esc_gain * gradient_estimate
             
+            # Update our estimate of the optimal k by taking a step along the gradient
             self.k_hat.add_(k_hat_update.mean())
 
-            # Log ESC-related metrics to the tensordict
+            # Log ESC-related metrics to the tensordict for monitoring
+            # All logged tensors are expanded to the same `target_shape` for consistency
             logs = {
                 (self.agent_group, "esc_reward_J"): J_expanded,
                 (self.agent_group, "esc_grad_estimate"): gradient_estimate,
                 (self.agent_group, "esc_k_hat_update"): k_hat_update,
-                (self.agent_group, "esc_gain"): torch.tensor(self.esc_gain, device=self.device).expand(full_shape),
-                (self.agent_group, "k_hat_new"): self.k_hat.expand(full_shape),
+                (self.agent_group, "esc_gain"): torch.tensor(
+                    self.esc_gain, device=self.device
+                ).expand(target_shape),
+                (self.agent_group, "k_hat_new"): self.k_hat.expand(target_shape),
             }
             tensordict.update(logs)
 

@@ -78,7 +78,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run) -> Experiment:
     )
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo")
+@hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo_emo")
 def hydra_main(cfg: DictConfig) -> None:
     hydra_choices = HydraConfig.get().runtime.choices
     task_name = hydra_choices.task
