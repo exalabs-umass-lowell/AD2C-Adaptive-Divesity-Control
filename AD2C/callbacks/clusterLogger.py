@@ -149,106 +149,188 @@ class TrajectoryLoggerCallback(Callback):
 
     def _log_esc_plot(self, experiment: Experiment, latest_td: TensorDictBase):
         """
-        Generates and logs a visually improved and interactive ESC diagnostic plot using Plotly,
-        including mean diversity lines for analysis.
+        Create and log THREE separate Plotly figures:
+        1) Control Dynamics (time series): scaling ratio & diversity
+        2) Diversity vs |Scaling Ratio| (scatter) + linear fit
+        3) Learning Evolution (running averages per collection step)
         """
-        # 1. --- Data Extraction ---
+        # ---------- 1) Extract data from latest_td ----------
         try:
+            # Take first environment in the collector batch (you can adapt if needed)
             td_episode = latest_td[:, 0]
-            scaling_ratio = td_episode.get((self.control_group, "scaling_ratio")).mean(dim=(1, -1)).cpu().numpy()
-            logits = td_episode.get((self.control_group, "logits")).cpu()
+
+            # scaling_ratio: shape ~ [T, n_agents, action_dim] or [T, n_agents, ...]
+            # We reduce across agent dim and feature dim to get a single series over time
+            sr = td_episode.get((self.control_group, "scaling_ratio"))  # tensor
+            scaling_ratio = sr.mean(dim=(1, -1)).detach().cpu().numpy()  # [T]
+
+            # logits used to estimate a diversity proxy
+            logits = td_episode.get((self.control_group, "logits")).detach()
+            # diversity proxy: std over agents of the logits' L2 norm per agent
+            behavioral_diversity = logits.norm(dim=-1).std(dim=1).cpu().numpy()  # [T]
+
+            # k_hat (scalar-like). If it has [T, n_agents] we just pick the first value.
             k_hat_tensor = td_episode.get((self.control_group, "k_hat"))
-            k_hat = k_hat_tensor[0, 0].item()
-            behavioral_diversity = logits.norm(dim=-1).std(dim=1).cpu().numpy()
-            
+            k_hat = k_hat_tensor.reshape(-1)[0].item()
+
+            # Basic sanity
             if scaling_ratio.shape != behavioral_diversity.shape:
-                print("Warning: Shape mismatch. Skipping plot.")
+                print("Warning: scaling_ratio and diversity shapes differ; skipping ESC plots.")
                 return
-                
+
         except (KeyError, IndexError) as e:
-            print(f"Warning: Could not find key for plotting ({e}). Skipping plot.")
+            print(f"Warning: Could not find expected keys for ESC plotting ({e}). Skipping.")
             return
 
-        # --- Calculate mean diversity for plotting horizontal lines ---
-        mean_diversity = np.mean(behavioral_diversity)
+        T = len(scaling_ratio)
+        if T == 0:
+            return
 
-        # 2. --- Create the Plot using Plotly ---
-        fig = make_subplots(
-            rows=2, cols=2,
-            specs=[[{"secondary_y": True}, {}],
-                [{"secondary_y": True}, None]], # 'None' hides the bottom-right plot
-            subplot_titles=("A) Control Dynamics", "B) Base Diversity Estimate", "C) Learning Evolution")
-        )
-
-        # Plot A: Time-Series Dynamics
-        fig.add_trace(go.Scatter(y=scaling_ratio, name="Scaling Ratio", line=dict(color='royalblue')),
-                    row=1, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(y=behavioral_diversity, name="Diversity", line=dict(color='purple', dash='dash')),
-                    row=1, col=1, secondary_y=True)
-        
-        # Add horizontal mean line to Plot A (on the secondary y-axis)
-        fig.add_shape(type="line", xref="x1", yref="y2",
-                    x0=0, y0=mean_diversity, x1=len(behavioral_diversity)-1, y1=mean_diversity,
-                    line=dict(color="limegreen", width=2, dash="dot"))
-
-        # Plot B: Base Diversity Estimate
+        mean_diversity = float(np.mean(behavioral_diversity))
         abs_scaling_ratio = np.abs(scaling_ratio)
-        fig.add_trace(go.Scatter(x=abs_scaling_ratio, y=behavioral_diversity, mode='markers',
-                                name='Data Points', marker=dict(opacity=0.6, color='royalblue')),
-                    row=1, col=2)
-        if len(abs_scaling_ratio) > 1:
-            slope, intercept = np.polyfit(abs_scaling_ratio, behavioral_diversity, 1)
-            fit_line = slope * abs_scaling_ratio + intercept
-            fig.add_trace(go.Scatter(x=abs_scaling_ratio, y=fit_line, mode='lines',
-                                    name=f'Fit (Slope ≈ {slope:.2f})', line=dict(color='red')),
-                        row=1, col=2)
 
-        # Add horizontal mean line to Plot B
-        fig.add_shape(type="line", xref="x2", yref="y3",
-                    x0=np.min(abs_scaling_ratio), y0=mean_diversity, x1=np.max(abs_scaling_ratio), y1=mean_diversity,
-                    line=dict(color="limegreen", width=2, dash="dot"))
-                    
-        # Add an annotation to label the mean line in Plot B
-        fig.add_annotation(xref="paper", yref="y3", x=0.98, y=mean_diversity,
-                        text=f"Mean Div: {mean_diversity:.2f}", showarrow=False, yshift=10,
-                        font=dict(color="limegreen"), bgcolor="rgba(255,255,255,0.8)")
+        # Keep a running history for plot (3)
+        self.esc_history_data.append({
+            "ratio": float(np.mean(scaling_ratio)),
+            "diversity": float(np.mean(behavioral_diversity)),
+        })
 
-        # Plot C: Learning Evolution
-        self.esc_history_data.append({"ratio": scaling_ratio.mean(), "diversity": behavioral_diversity.mean()})
-        if len(self.esc_history_data) > 1:
-            indices = list(range(len(self.esc_history_data)))
-            ratios = [d['ratio'] for d in self.esc_history_data]
-            diversities = [d['diversity'] for d in self.esc_history_data]
-            
-            fig.add_trace(go.Scatter(x=indices, y=ratios, name="Avg. Ratio", line=dict(color='royalblue')),
-                        row=2, col=1, secondary_y=False)
-            fig.add_trace(go.Scatter(x=indices, y=diversities, name="Avg. Diversity", line=dict(color='purple', dash='dash')),
-                        row=2, col=1, secondary_y=True)
-
-        # 3. --- Update Layout and Axis Titles ---
-        fig.update_layout(
-            title_text=f"ESC Diagnostics - Collection Step #{self.collect_step_count}",
-            legend_title_text="Metrics",
-            height=700,
-            template="plotly_white"
+        # ---------- 2) FIGURE 1: Control Dynamics (time series) ----------
+        fig_ts = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+        fig_ts.add_trace(
+            go.Scatter(x=np.arange(T), y=scaling_ratio, name="Scaling Ratio"),
+            row=1, col=1, secondary_y=False,
         )
-        fig.update_xaxes(title_text="Time Step", row=1, col=1)
-        fig.update_yaxes(title_text="Scaling Ratio", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Diversity", showgrid=False, row=1, col=1, secondary_y=True)
-        fig.update_xaxes(title_text="Absolute Scaling Ratio", row=1, col=2)
-        fig.update_yaxes(title_text="Behavioral Diversity", row=1, col=2)
-        fig.update_xaxes(title_text="Collection Epoch", row=2, col=1)
-        fig.update_yaxes(title_text="Avg. Ratio", row=2, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Avg. Diversity", showgrid=False, row=2, col=1, secondary_y=True)
-        
-        # 4. --- Logging ---
+        fig_ts.add_trace(
+            go.Scatter(x=np.arange(T), y=behavioral_diversity, name="Diversity", line=dict(dash="dash")),
+            row=1, col=1, secondary_y=True,
+        )
+        # Mean diversity line on secondary y
+        fig_ts.add_shape(
+            type="line", x0=0, x1=T-1, y0=mean_diversity, y1=mean_diversity,
+            xref="x1", yref="y2", line=dict(width=2, dash="dot")
+        )
+        fig_ts.update_layout(
+            title=f"ESC Control Dynamics — step #{self.collect_step_count}",
+            template="plotly_white", height=350, legend_title_text="Metrics",
+        )
+        fig_ts.add_annotation(
+            x=0.98, xref="paper",        # pin near the right edge regardless of x-range
+            y=mean_diversity, yref="y2", # reference the secondary y-axis
+            text=f"Mean Diversity = {mean_diversity:.3f}",
+            showarrow=False,
+            xanchor="right",
+            yshift=8,
+            bgcolor="rgba(255,255,255,0.7)"
+        )
+        fig_ts.update_xaxes(title_text="Time Step", row=1, col=1)
+        fig_ts.update_yaxes(title_text="Scaling Ratio", row=1, col=1, secondary_y=False)
+        fig_ts.update_yaxes(title_text="Diversity", row=1, col=1, secondary_y=True, showgrid=False)
+
+        # ---------- 3) FIGURE 2: Diversity vs |Scaling Ratio| (scatter + fit) ----------
+        fig_scatter = go.Figure()
+        fig_scatter.add_trace(
+            go.Scatter(x=abs_scaling_ratio, y=behavioral_diversity, mode="markers", name="Data")
+        )
+
+        # optional linear fit
+        if T > 1 and np.isfinite(abs_scaling_ratio).all() and np.isfinite(behavioral_diversity).all():
+            slope, intercept = np.polyfit(abs_scaling_ratio, behavioral_diversity, 1)
+            xs = (np.linspace(abs_scaling_ratio.min(), abs_scaling_ratio.max(), 100)
+                if abs_scaling_ratio.max() > abs_scaling_ratio.min() else abs_scaling_ratio)
+            ys = slope * xs + intercept
+            fig_scatter.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=f"Fit (m≈{slope:.2f})"))
+
+        # --- horizontal mean diversity line across the whole plot width ---
+        y_mean = float(np.nanmean(behavioral_diversity))
+        fig_scatter.add_shape(
+            type="line",
+            x0=0, x1=1, xref="x domain",   # spans the full x domain
+            y0=y_mean, y1=y_mean, yref="y",
+            line=dict(width=2, dash="dot")
+        )
+        fig_scatter.add_annotation(
+            x=1, xref="x domain", y=y_mean, yref="y",
+            text=f"mean diversity = {y_mean:.2f}",
+            showarrow=False, xshift=-6, yshift=10
+        )
+
+        fig_scatter.update_layout(
+            title=f"Diversity vs |Scaling Ratio| — step #{self.collect_step_count}",
+            xaxis_title="|Scaling Ratio|",
+            yaxis_title="Behavioral Diversity",
+            template="plotly_white",
+            height=350,
+        )
+
+        # ---------- 4) FIGURE 3: Learning Evolution (history over collection steps) ----------
+        fig_hist = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+        if len(self.esc_history_data) >= 1:
+            idx = np.arange(len(self.esc_history_data))
+            ratios = np.array([d["ratio"] for d in self.esc_history_data], dtype=float)
+            diversities = np.array([d["diversity"] for d in self.esc_history_data], dtype=float)
+
+            fig_hist.add_trace(
+                go.Scatter(x=idx, y=ratios, name="Avg. Ratio"),
+                row=1, col=1, secondary_y=False,
+            )
+            fig_hist.add_trace(
+                go.Scatter(x=idx, y=diversities, name="Avg. Diversity", line=dict(dash="dash")),
+                row=1, col=1, secondary_y=True,
+            )
+
+            # --- Means as TRACES (show in legend) ---
+            x_left = float(idx.min()) if idx.size else 0.0
+            x_right = float(idx.max()) if idx.size else 0.0
+            if x_left == x_right:       # single point -> give some width
+                x_left -= 0.5
+                x_right += 0.5
+                fig_hist.update_xaxes(range=[x_left, x_right])
+
+            mean_div_hist = float(np.nanmean(diversities))
+            mean_ratio_hist = float(np.nanmean(ratios))
+
+            fig_hist.add_trace(
+                go.Scatter(x=[x_left, x_right], y=[mean_ratio_hist, mean_ratio_hist],
+                        name=f"Mean Ratio ({mean_ratio_hist:.2f})",
+                        line=dict(dash="dot"), hoverinfo="skip"),
+                row=1, col=1, secondary_y=False,
+            )
+            fig_hist.add_trace(
+                go.Scatter(x=[x_left, x_right], y=[mean_div_hist, mean_div_hist],
+                        name=f"Mean Diversity ({mean_div_hist:.3f})",
+                        line=dict(dash="dot"), hoverinfo="skip"),
+                row=1, col=1, secondary_y=True,
+            )
+
+            # Label the avg diversity value so it's readable even when zoomed
+            fig_hist.add_annotation(
+                x=0.98, xref="paper",
+                y=mean_div_hist, yref="y2",
+                text=f"Avg Diversity = {mean_div_hist:.3f}",
+                showarrow=False, xanchor="right", yshift=8,
+                bgcolor="rgba(255,255,255,0.7)"
+            )
+
+        fig_hist.update_layout(
+            title=f"ESC Learning Evolution — up to step #{self.collect_step_count}",
+            template="plotly_white", height=350, legend_title_text="Metrics",
+        )
+        fig_hist.update_xaxes(title_text="Collection Epoch", row=1, col=1)
+        fig_hist.update_yaxes(title_text="Avg. Ratio", row=1, col=1, secondary_y=False)
+        fig_hist.update_yaxes(title_text="Avg. Diversity", row=1, col=1, secondary_y=True, showgrid=False)
+
+        # ---------- 5) Log all three plots + key scalars ----------
         logs_to_push = {
-            "ESC/Diagnostics_Plot": fig,
-            "ESC/average_scaling_ratio": scaling_ratio.mean(),
-            "ESC/average_behavioral_diversity": behavioral_diversity.mean(),
-            "ESC/k_hat": k_hat
+            "ESC/Control_Dynamics": fig_ts,
+            "ESC/Diversity_vs_AbsRatio": fig_scatter,
+            "ESC/Learning_Evolution": fig_hist,
+            "ESC/average_scaling_ratio": float(np.mean(scaling_ratio)),
+            "ESC/average_behavioral_diversity": float(np.mean(behavioral_diversity)),
+            "ESC/k_hat": k_hat,
         }
         experiment.logger.log(logs_to_push, step=self.collect_step_count)
+
         
     def _get_agent_actions_for_rollout(self, rollout: TensorDictBase) -> List[torch.Tensor]:
         """Computes actions for all agents based on the rollout's observations."""

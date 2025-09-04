@@ -1,0 +1,2 @@
+source /home/grad/doc/2027/spatel2/miniconda3/bin/activate venv
+python AD2C/esc_model_run.py

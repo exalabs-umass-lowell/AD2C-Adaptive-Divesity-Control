@@ -4,6 +4,8 @@
         "./rl",
         "./tensordict",
         "./tensordict/test/test_func",
-        "./src/benchmarl"
+        "./src/benchmarl",
+        "./tensordict/test/test_func",
+        "./tensordict/test/test_func"
     ]
 }
