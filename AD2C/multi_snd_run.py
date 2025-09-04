@@ -78,7 +78,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run) -> Experiment:
     )
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo")
+@hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo_emo")
 def hydra_main(cfg: DictConfig) -> None:
     hydra_choices = HydraConfig.get().runtime.choices
     task_name = hydra_choices.task
@@ -86,9 +86,9 @@ def hydra_main(cfg: DictConfig) -> None:
     
     # Define SND arms and other parameters
     # snd_arms = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    snd_arms = [0.5, 0.8, 1, 2, 3]
+    snd_arms = [0.0, 0.2, 0.4, 0.5, 0.8, 1, 1.5, 2, 2.5, 3]
     # snd_arms = [1]
-    exploration_frames = 1_200_000
+    exploration_frames = 6_000_000
     # final_frames = 6_000_000
     
     base_save_folder = HydraConfig.get().run.dir
