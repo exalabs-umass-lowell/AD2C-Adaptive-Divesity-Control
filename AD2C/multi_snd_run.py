@@ -16,6 +16,7 @@ from AD2C.callbacks.SndCallback import SndCallback as SndCallbackClass
 from AD2C.callbacks.SimpleProportionalController import SimpleProportionalController
 from AD2C.callbacks.clusterSndCallback import clusterSndCallback
 from AD2C.callbacks.fixed_callbacks import *
+from AD2C.callbacks.clusterLogger import TrajectoryLoggerCallback
 
 
 import benchmarl.models
@@ -110,10 +111,10 @@ def hydra_main(cfg: DictConfig) -> None:
         exploration_cfg.model.desired_snd = snd
                 
         callbacks = [
-            # SndCallbackClass(
-            #     control_group="agents",
-            #     initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
-            # ),
+            SndCallbackClass(
+                control_group="agents",
+                initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
+            ),
 
             # gradientBaseSndCallback(
             #     control_group = "agents",
@@ -122,10 +123,10 @@ def hydra_main(cfg: DictConfig) -> None:
             #     alpha = 0.01,
             # ),
         
-            clusterSndCallback(
-                control_group="agents",
-                initial_snd=snd,  # 0.0, 0.1,
-            ),
+            # clusterSndCallback(
+            #     control_group="agents",
+            #     initial_snd=snd,  # 0.0, 0.1,
+            # ),
 
             # pIControllerCallback(
             #     control_group="agents",
@@ -138,6 +139,10 @@ def hydra_main(cfg: DictConfig) -> None:
             #     proportional_gain=0.2,
             #     initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
             # ),
+
+            TrajectoryLoggerCallback(
+                control_group = "agents",
+            ),
 
             NormLoggerCallback(),
             ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),

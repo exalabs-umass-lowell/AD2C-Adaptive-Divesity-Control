@@ -29,7 +29,7 @@ from benchmarl.hydra_config import (
     load_task_config_from_hydra,
     load_model_config_from_hydra,
 )
-from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical, HetControlMlpEmpiricalConfig
+from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpiricalConfig, HetControlMlpEmpiricalConfig
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc, HetControlMlpEscConfig
 # from AD2C.callback123 import *
 from AD2C.callbacks.SndLogCallback import SndLoggingCallback
