@@ -10,7 +10,7 @@ activation_class: torch.nn.Tanh
 
 # The learning rate/gain (K) for the ESC integrator. Controls how quickly the
 # controller adapts the scaling factor.
-esc_gain: 1
+esc_gain: 0.05
 
 # The amplitude (a) of the dither signal. This is the size of the "jiggle"
 # applied to the scaling factor to probe the performance gradient.

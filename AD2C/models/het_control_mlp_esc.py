@@ -30,6 +30,8 @@ class HetControlMlpEsc(Model):
         **kwargs,
     ):
         """Policy model with Extremum Seeking Control (ESC) for diversity."""
+        env_spec = kwargs["env_spec"]
+        
         super().__init__(**kwargs)
 
         self.num_cells = num_cells
@@ -40,12 +42,16 @@ class HetControlMlpEsc(Model):
         self.esc_gain = esc_gain
         self.esc_amplitude = esc_amplitude
         self.esc_frequency = esc_frequency
-
+        self.tau = 0.005
+        
         # --- ESC State Buffers ---
         self.register_buffer("k_hat", torch.tensor([initial_k], device=self.device, dtype=torch.float))
         self.register_buffer("time_step", torch.tensor(0, device=self.device, dtype=torch.int))
         self.register_buffer("last_dither", torch.tensor([0.0], device=self.device, dtype=torch.float))
-
+        
+        reward_shape = env_spec[self.agent_group, "reward"].shape
+        self.register_buffer("ema_reward", torch.zeros(*reward_shape, device=self.device))
+                
         self.scale_extractor = (
             NormalParamExtractor(scale_mapping=scale_mapping)
             if scale_mapping is not None
@@ -107,7 +113,9 @@ class HetControlMlpEsc(Model):
             
             # Expand the agent-wise average reward across the batch dimension
             # This ensures its shape is compatible for element-wise operations
-            J_expanded = J_per_agent.unsqueeze(0).expand(target_shape)
+            self.ema_reward.mul_(1 - self.tau).add_(J_per_agent * self.tau)
+            J_expanded = self.ema_reward.unsqueeze(0).expand(target_shape)        
+            # J_expanded = J_per_agent.unsqueeze(0).expand(target_shape)
             
             # Calculate gradient estimate and update k_hat
             # The gradient is estimated by multiplying the objective by the dither signal
