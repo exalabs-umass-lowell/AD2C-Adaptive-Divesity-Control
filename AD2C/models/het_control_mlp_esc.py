@@ -100,12 +100,18 @@ class HetControlMlpEsc(Model):
     # ------------------------ ESC core ------------------------
     def _update_esc_controller(self, tensordict: TensorDictBase) -> None:
         reward_key = ("next", self.agent_group, "reward")
-        if reward_key not in tensordict.keys(include_nested=True) or not torch.is_grad_enabled():
+        
+        # ========== THIS IS THE CORRECTED LINE ==========
+        if reward_key not in tensordict.keys(include_nested=True):
             return
+        # ================================================
 
         with torch.no_grad():
             reward = tensordict.get(reward_key)
+            
             J = reward.mean()
+
+            print(J)
 
             # EMA(J)
             self.s_reward.mul_(1 - self.tau).add_(J * self.tau)
@@ -119,6 +125,8 @@ class HetControlMlpEsc(Model):
             agent_group_shape = tensordict.get_item_shape(self.agent_group)
             rdev, rdtype = reward.device, reward.dtype
 
+
+            # print(f'J : {J}; estinated Gradeant: {gradient_estimate}; K_hat Update : {k_hat_update}')
             tensordict.set((self.agent_group, "esc_gain"),
                            torch.as_tensor(self.esc_gain, device=rdev, dtype=rdtype).expand(agent_group_shape))
             tensordict.set((self.agent_group, "esc_reward_J"),
