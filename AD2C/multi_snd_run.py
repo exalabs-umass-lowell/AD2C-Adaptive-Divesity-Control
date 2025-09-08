@@ -87,8 +87,8 @@ def hydra_main(cfg: DictConfig) -> None:
     
     # Define SND arms and other parameters
     # snd_arms = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    snd_arms = [0.0, 0.5, 0.8, 1, 1.5]
-    # snd_arms = [1]
+    # snd_arms = ['null', 0.5, 0.8, 1]
+    snd_arms = [1]
     exploration_frames = 3_000_000
     # final_frames = 6_000_000
     

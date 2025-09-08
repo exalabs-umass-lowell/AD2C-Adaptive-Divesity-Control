@@ -7,5 +7,8 @@
         "./src/benchmarl",
         "./tensordict/test/test_func",
         "./tensordict/test/test_func"
-    ]
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": []
 }

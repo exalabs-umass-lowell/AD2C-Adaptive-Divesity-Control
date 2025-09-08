@@ -20,4 +20,4 @@ lidar_range: 0.35
 # The radius of the agents
 agent_radius: 0.1
 
-pos_shaping_factor: 100.0
+# pos_shaping_factor: 10.0
