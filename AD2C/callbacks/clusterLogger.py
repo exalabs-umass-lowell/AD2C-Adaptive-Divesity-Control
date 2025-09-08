@@ -62,7 +62,7 @@ class TrajectoryLoggerCallback(Callback):
         for ns, key in keys_to_log:
             val = batch.get((self.control_group, ns, key), None)
             if val is not None:
-                to_log[f"collection/{self.control_group}/{ns}/{key}"] = val.float().mean().item()
+                to_log[f"ESC/{self.control_group}/{ns}/{key}"] = val.float().mean().item()
         if to_log: experiment.logger.log(to_log, step=self.collect_step_count)
 
     # In your TrajectoryLoggerCallback class...
@@ -71,40 +71,38 @@ class TrajectoryLoggerCallback(Callback):
         metrics = self._extract_esc_metrics(latest_td)
         if metrics is None: return
         
-        # Always store history data at every step
+        # This history data is still needed for the Gradient Landscape plot
         self.esc_history_data.append({
             "k_hat": metrics["k_hat"],
             "gradient_estimate": metrics.get("gradient_estimate", 0.0),
             "j_mean": metrics.get("j_mean", 0.0)
         })
 
-        # Always store continuous data at every step
+        # --- This section remains the same ---
+        reward_tensor = latest_td.get(("next", self.control_group, "reward"))
+        reward_traj = self._process_trajectory(reward_tensor)
+
+        if self.collect_step_count % 10 == 0 and reward_traj is not None:
+            self.reward_scaling_data.extend(zip(metrics["scaling_ratio"], reward_traj))
+        
         self.continuous_scaling_data.extend(metrics["scaling_ratio"])
         self.continuous_k_hat_data.extend(np.full_like(metrics["scaling_ratio"], metrics["k_hat"]))
         if "behavioral_diversity" in metrics:
             self.continuous_diversity_data.extend(metrics["behavioral_diversity"])
-        
-        # Periodically collect scatter plot data
-        if self.collect_step_count % 10 == 0:
-            reward_tensor = latest_td.get(("next", self.control_group, "reward"))
-            reward_traj = self._process_trajectory(reward_tensor)
-            if reward_traj is not None:
-                self.reward_scaling_data.extend(zip(metrics["scaling_ratio"], reward_traj))
+        # ------------------------------------
 
         step_count = self.collect_step_count
         
-        # --- These plots show data from the LATEST episode, so they update every step ---
+        # --- logs_to_push is now simplified ---
         logs_to_push = {
             "ESC/1_Control_Dynamics": self._plot_control_dynamics(metrics, step_count),
             "ESC/4_Intra-Episode_Gradient": self._plot_gradient_estimate(metrics, step_count),
             "ESC/7_Continuous_Signal": self._plot_continuous_control_signal(step_count),
-            "ESC/current_k_hat": metrics["k_hat"],
+            "ESC/current_k_hat": metrics["k_hat"], # This scalar log is kept
         }
 
-        # --- These plots show HISTORY, so we only generate them periodically ---
-        if self.collect_step_count % 1 == 0:
-            logs_to_push["ESC/2_k_hat_Evolution"] = self._plot_learning_evolution(step_count)
-            logs_to_push["ESC/3_Gradient_Evolution"] = self._plot_gradient_evolution(step_count)
+        # The history plots are now generated periodically
+        if self.collect_step_count % 100 == 0:
             logs_to_push["ESC/5_Reward_vs_Scaling_Scatter"] = self._plot_reward_scaling_scatter(step_count)
             logs_to_push["ESC/6_Gradient_Landscape"] = self._plot_gradient_landscape(step_count)
         

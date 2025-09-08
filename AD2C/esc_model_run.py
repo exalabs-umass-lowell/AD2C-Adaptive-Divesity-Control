@@ -109,12 +109,14 @@ def hydra_main(cfg: DictConfig) -> None:
             
     # Callbacks for the experiment
     callbacks = [
-        # SndLoggingCallback(
-        #     # control_group = "agents",
-        #     ),
+        SndLoggingCallback(
+            # control_group = "agents",
+            ),
+
         # EscLoggerCallback(
         #     # control_group = "agents",
         # ),
+
         TrajectoryLoggerCallback(
             control_group = "agents",
         ),
