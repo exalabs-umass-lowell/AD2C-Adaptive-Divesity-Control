@@ -2,8 +2,8 @@ defaults:
   - experiment: het_control_experiment
   - algorithm: ippo
   - task: vmas/navigation
-  # - model: hetcontrolmlpempirical
-  - model: hetcontrolmlpesc
+  - model: hetcontrolmlpsnd
+  # - model: hetcontrolmlpesc
   - model@critic_model: layers/mlp
   - _self_
 
@@ -15,10 +15,7 @@ action_loss_lr: 0.00003
 
 task:
   n_agents: 2
-  agents_with_same_goal: 2
-  # collisions: True
-  # shared_rew: False
-
+  agents_with_same_goal: 1
 
 experiment:
   save_folder: /home/grad/doc/2027/spatel2/MARL-UAV/outputs

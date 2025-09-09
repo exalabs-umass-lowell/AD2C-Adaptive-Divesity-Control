@@ -1,262 +1,273 @@
-from typing import List
+from typing import List, Union
+from collections import deque
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-# benchmarl and tensordict imports
-from tensordict import TensorDictBase, TensorDict
+from tensordict import TensorDictBase
 from benchmarl.experiment import Experiment
 from benchmarl.experiment.callback import Callback
-
-# Your project-specific imports
-from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc
-from AD2C.snd import compute_behavioral_distance
-from .plots import plot_trajectory_2d, plot_agent_distances
+from AD2C.models.het_control_mlp_snd import HetControlMlpEscSnd
 from callbacks.utils import get_het_model
 
 
 class TrajectoryLoggerCallback(Callback):
-    """
-    A comprehensive callback that logs:
-    1. Evaluation metrics (SND, Return) from evaluation rollouts.
-    2. Detailed ESC diagnostics (plots, k_hat) from training data collection.
-    """
-    def __init__(self, control_group: str):
+    def __init__(self, control_group: str, max_scatter_points: int = 20000, max_continuous_points: int = 50000):
         super().__init__()
         self.control_group = control_group
-        
-        # --- State for Evaluation Plots ---
-        self.eps_actual_diversity = []
-        self.eps_mean_returns = []
-        self.eps_number = []
-        
-        # --- State for ESC Training Plots ---
         self.esc_history_data = []
+        self.reward_scaling_data = deque(maxlen=max_scatter_points)
+        self.continuous_scaling_data = deque(maxlen=max_continuous_points)
+        self.continuous_k_hat_data = deque(maxlen=max_continuous_points)
+        self.continuous_diversity_data = deque(maxlen=max_continuous_points)
         self.collect_step_count = 0
-        
         self.model = None
 
-    # CORRECTED SIGNATURE: Added the 'experiment' argument
     def on_setup(self):
-        """Finds the policy model for the specified group."""
+        """Correctly identifies the model."""
         if self.control_group not in self.experiment.group_policies:
             print(f"\nWARNING: Logger group '{self.control_group}' not found. Disabling logger.\n")
             return
-
         policy = self.experiment.group_policies[self.control_group]
         self.model = get_het_model(policy)
+        # if isinstance(self.model, HetControlMlpEsc):
+        if isinstance(self.model, HetControlMlpEscSnd):
 
-        if isinstance(self.model, (HetControlMlpEmpirical, HetControlMlpEsc)):
-            print(f"\nSUCCESS: Trajectory Logger initialized for group '{self.control_group}'.")
+            print(f"\nSUCCESS: Logger initialized for group '{self.control_group}'.")
         else:
-            print(f"\nWARNING: A compatible model was not found for '{self.control_group}'. Disabling logger.\n")
+            print(f"\nWARNING: A compatible model was not found. Disabling logger.\n")
             self.model = None
 
-    # This hook runs after TRAINING data has been collected
     def on_batch_collected(self, batch: TensorDictBase):
-        """Logs ESC-specific diagnostics from the training data collector."""
-        if not isinstance(self.model, HetControlMlpEsc):
-            return
+        """Performs the model update and then logs the results."""
+        # if not isinstance(self.model, HetControlMlpEsc): return
+        if not isinstance(self.model, HetControlMlpEscSnd): return
 
-        # Log both scalars and plots using the collected data
+        self.model._update_esc(batch)
         self._log_esc_scalars(self.experiment, batch)
         self._log_esc_plot(self.experiment, batch)
-
         self.collect_step_count += 1
 
-    # CORRECTED SIGNATURE: Added the 'experiment' argument
-    def on_evaluation_end(self, rollouts: List[TensorDictBase]):
-        """Calculates and logs metrics from EVALUATION rollouts."""
-        if self.model is None: return
-
-        episode_snd = []
-        episode_returns = []
-        plot_generated = False
-        logs_to_push = {}
-
-        with torch.no_grad():
-            for r in rollouts:
-                agent_actions = self._get_agent_actions_for_rollout(r)
-                
-                pairwise_distances = compute_behavioral_distance(agent_actions, just_mean=False)
-                episode_snd.append(pairwise_distances.mean().item())
-
-                if not plot_generated:
-                    agent_distance_plot = plot_agent_distances(
-                        pairwise_distances_tensor=pairwise_distances,
-                        n_agents=self.model.n_agents
-                    )
-                    logs_to_push["eval/Agent_Distances"] = agent_distance_plot
-                    plot_generated = True
-
-                reward_key = ('next', self.control_group, 'reward')
-                total_reward = r.get(reward_key).sum().item()
-                episode_returns.append(total_reward)
-
-        if not episode_returns: return
-
-        mean_actual_snd = np.mean(episode_snd)
-        mean_return = np.mean(episode_returns)
-
-        self.eps_actual_diversity.append(mean_actual_snd)
-        self.eps_mean_returns.append(mean_return)
-        self.eps_number.append(self.experiment.n_iters_performed)
-
-        logs_to_push["eval/actual_snd"] = mean_actual_snd
-        logs_to_push["eval/mean_return"] = mean_return
-
-        if len(self.eps_number) > 1:
-            if np.isfinite(self.eps_actual_diversity).all() and np.isfinite(self.eps_mean_returns).all():
-                plot_2d = plot_trajectory_2d(
-                    snd=self.eps_actual_diversity,
-                    returns=self.eps_mean_returns,
-                    episodes=self.eps_number
-                )
-                logs_to_push["eval/SND_vs_Reward_Trajectory"] = plot_2d
-
-        self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
+    @staticmethod
+    def _process_trajectory(tensor: torch.Tensor) -> Union[np.ndarray, None]:
+        if tensor is None or tensor.numel() == 0: return None
+        trajectory = tensor[0].detach()
+        while trajectory.ndim > 1:
+            trajectory = trajectory.mean(dim=-1)
+        return trajectory.cpu().numpy()
 
     def _log_esc_scalars(self, experiment: Experiment, batch: TensorDictBase):
-        """
-        Logs the mean of important ESC tensors as scalars, based on your reference.
-        """
-        # Define all the keys your model logs to the tensordict
         keys_to_log = [
-            (self.control_group, "logits"),
-            (self.control_group, "out_loc_norm"),
-            (self.control_group, "scaling_ratio"),
-            (self.control_group, "k_hat"),
-            (self.control_group, "esc_dither"),
-            (self.control_group, "esc_reward_J"),
-            (self.control_group, "esc_grad_estimate"),
-            (self.control_group, "esc_k_hat_update"),
+            ("output", "logits"), ("output", "scaling_ratio"), ("output", "dither"),
+            ("esc", "k_hat"), ("esc", "s_reward"), ("esc", "J_mean"),
+            ("esc", "grad_estimate"), ("esc", "k_hat_update"),("esc", "s_reward_new")
         ]
+        to_log = {}
+        for ns, key in keys_to_log:
+            val = batch.get((self.control_group, ns, key), None)
+            if val is not None:
+                to_log[f"ESC/{self.control_group}/{ns}/{key}"] = val.float().mean().item()
+        if to_log: experiment.logger.log(to_log, step=self.collect_step_count)
+
+    # In your TrajectoryLoggerCallback class...
+
+    def _log_esc_plot(self, experiment: 'Experiment', latest_td: TensorDictBase):
+        metrics = self._extract_esc_metrics(latest_td)
+        if metrics is None: return
         
-        to_log_dict = {}
-        for key in keys_to_log:
-            value = batch.get(key, None)
-            if value is not None:
-                # Format the key for W&B, e.g., "collection/agents/k_hat_mean"
-                log_name = f"collection/{'/'.join(key)}"
-                to_log_dict[log_name] = torch.mean(value.float()).item()
+        # This history data is still needed for the Gradient Landscape plot
+        self.esc_history_data.append({
+            "k_hat": metrics["k_hat"],
+            "gradient_estimate": metrics.get("gradient_estimate", 0.0),
+            "j_mean": metrics.get("j_mean", 0.0)
+        })
+
+        # --- This section remains the same ---
+        reward_tensor = latest_td.get(("next", self.control_group, "reward"))
+        reward_traj = self._process_trajectory(reward_tensor)
+
+        if self.collect_step_count % 10 == 0 and reward_traj is not None:
+            self.reward_scaling_data.extend(zip(metrics["scaling_ratio"], reward_traj))
         
-        if to_log_dict:
-            experiment.logger.log(to_log_dict, step=self.collect_step_count)
+        self.continuous_scaling_data.extend(metrics["scaling_ratio"])
+        self.continuous_k_hat_data.extend(np.full_like(metrics["scaling_ratio"], metrics["k_hat"]))
+        if "behavioral_diversity" in metrics:
+            self.continuous_diversity_data.extend(metrics["behavioral_diversity"])
+        # ------------------------------------
 
-    def _log_esc_plot(self, experiment: Experiment, latest_td: TensorDictBase):
-        """
-        Generates and logs a visually improved and interactive ESC diagnostic plot using Plotly,
-        including mean diversity lines for analysis.
-        """
-        # 1. --- Data Extraction ---
-        try:
-            td_episode = latest_td[:, 0]
-            scaling_ratio = td_episode.get((self.control_group, "scaling_ratio")).mean(dim=(1, -1)).cpu().numpy()
-            logits = td_episode.get((self.control_group, "logits")).cpu()
-            k_hat_tensor = td_episode.get((self.control_group, "k_hat"))
-            k_hat = k_hat_tensor[0, 0].item()
-            behavioral_diversity = logits.norm(dim=-1).std(dim=1).cpu().numpy()
-            
-            if scaling_ratio.shape != behavioral_diversity.shape:
-                print("Warning: Shape mismatch. Skipping plot.")
-                return
-                
-        except (KeyError, IndexError) as e:
-            print(f"Warning: Could not find key for plotting ({e}). Skipping plot.")
-            return
-
-        # --- Calculate mean diversity for plotting horizontal lines ---
-        mean_diversity = np.mean(behavioral_diversity)
-
-        # 2. --- Create the Plot using Plotly ---
-        fig = make_subplots(
-            rows=2, cols=2,
-            specs=[[{"secondary_y": True}, {}],
-                [{"secondary_y": True}, None]], # 'None' hides the bottom-right plot
-            subplot_titles=("A) Control Dynamics", "B) Base Diversity Estimate", "C) Learning Evolution")
-        )
-
-        # Plot A: Time-Series Dynamics
-        fig.add_trace(go.Scatter(y=scaling_ratio, name="Scaling Ratio", line=dict(color='royalblue')),
-                    row=1, col=1, secondary_y=False)
-        fig.add_trace(go.Scatter(y=behavioral_diversity, name="Diversity", line=dict(color='purple', dash='dash')),
-                    row=1, col=1, secondary_y=True)
+        step_count = self.collect_step_count
         
-        # Add horizontal mean line to Plot A (on the secondary y-axis)
-        fig.add_shape(type="line", xref="x1", yref="y2",
-                    x0=0, y0=mean_diversity, x1=len(behavioral_diversity)-1, y1=mean_diversity,
-                    line=dict(color="limegreen", width=2, dash="dot"))
-
-        # Plot B: Base Diversity Estimate
-        abs_scaling_ratio = np.abs(scaling_ratio)
-        fig.add_trace(go.Scatter(x=abs_scaling_ratio, y=behavioral_diversity, mode='markers',
-                                name='Data Points', marker=dict(opacity=0.6, color='royalblue')),
-                    row=1, col=2)
-        if len(abs_scaling_ratio) > 1:
-            slope, intercept = np.polyfit(abs_scaling_ratio, behavioral_diversity, 1)
-            fit_line = slope * abs_scaling_ratio + intercept
-            fig.add_trace(go.Scatter(x=abs_scaling_ratio, y=fit_line, mode='lines',
-                                    name=f'Fit (Slope ≈ {slope:.2f})', line=dict(color='red')),
-                        row=1, col=2)
-
-        # Add horizontal mean line to Plot B
-        fig.add_shape(type="line", xref="x2", yref="y3",
-                    x0=np.min(abs_scaling_ratio), y0=mean_diversity, x1=np.max(abs_scaling_ratio), y1=mean_diversity,
-                    line=dict(color="limegreen", width=2, dash="dot"))
-                    
-        # Add an annotation to label the mean line in Plot B
-        fig.add_annotation(xref="paper", yref="y3", x=0.98, y=mean_diversity,
-                        text=f"Mean Div: {mean_diversity:.2f}", showarrow=False, yshift=10,
-                        font=dict(color="limegreen"), bgcolor="rgba(255,255,255,0.8)")
-
-        # Plot C: Learning Evolution
-        self.esc_history_data.append({"ratio": scaling_ratio.mean(), "diversity": behavioral_diversity.mean()})
-        if len(self.esc_history_data) > 1:
-            indices = list(range(len(self.esc_history_data)))
-            ratios = [d['ratio'] for d in self.esc_history_data]
-            diversities = [d['diversity'] for d in self.esc_history_data]
-            
-            fig.add_trace(go.Scatter(x=indices, y=ratios, name="Avg. Ratio", line=dict(color='royalblue')),
-                        row=2, col=1, secondary_y=False)
-            fig.add_trace(go.Scatter(x=indices, y=diversities, name="Avg. Diversity", line=dict(color='purple', dash='dash')),
-                        row=2, col=1, secondary_y=True)
-
-        # 3. --- Update Layout and Axis Titles ---
-        fig.update_layout(
-            title_text=f"ESC Diagnostics - Collection Step #{self.collect_step_count}",
-            legend_title_text="Metrics",
-            height=700,
-            template="plotly_white"
-        )
-        fig.update_xaxes(title_text="Time Step", row=1, col=1)
-        fig.update_yaxes(title_text="Scaling Ratio", row=1, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Diversity", showgrid=False, row=1, col=1, secondary_y=True)
-        fig.update_xaxes(title_text="Absolute Scaling Ratio", row=1, col=2)
-        fig.update_yaxes(title_text="Behavioral Diversity", row=1, col=2)
-        fig.update_xaxes(title_text="Collection Epoch", row=2, col=1)
-        fig.update_yaxes(title_text="Avg. Ratio", row=2, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Avg. Diversity", showgrid=False, row=2, col=1, secondary_y=True)
-        
-        # 4. --- Logging ---
+        # --- logs_to_push is now simplified ---
         logs_to_push = {
-            "ESC/Diagnostics_Plot": fig,
-            "ESC/average_scaling_ratio": scaling_ratio.mean(),
-            "ESC/average_behavioral_diversity": behavioral_diversity.mean(),
-            "ESC/k_hat": k_hat
+            "ESC/1_Control_Dynamics": self._plot_control_dynamics(metrics, step_count),
+            "ESC/4_Intra-Episode_Gradient": self._plot_gradient_estimate(metrics, step_count),
+            "ESC/7_Continuous_Signal": self._plot_continuous_control_signal(step_count),
+            "ESC/current_k_hat": metrics["k_hat"], # This scalar log is kept
+            "ESC/mean_diversity": metrics["mean_diversity"]
+
         }
-        experiment.logger.log(logs_to_push, step=self.collect_step_count)
+
+        # The history plots are now generated periodically
+        if self.collect_step_count % 100 == 0:
+            logs_to_push["ESC/5_Reward_vs_Scaling_Scatter"] = self._plot_reward_scaling_scatter(step_count)
+            logs_to_push["ESC/6_Gradient_Landscape"] = self._plot_gradient_landscape(step_count)
         
-    def _get_agent_actions_for_rollout(self, rollout: TensorDictBase) -> List[torch.Tensor]:
-        """Computes actions for all agents based on the rollout's observations."""
-        obs = rollout.get((self.control_group, "observation"))
-        actions = []
-        # This re-computation can be slow. If performance is an issue, consider logging actions during the rollout.
-        for i in range(self.model.n_agents):
-            temp_td = TensorDict({(self.control_group, "observation"): obs}, batch_size=obs.shape[:-1])
-            action_td = self.model._forward(temp_td, agent_index=i, compute_estimate=False)
-            actions.append(action_td.get(self.model.out_key))
-        return actions
+        final_logs = {k: v for k, v in logs_to_push.items() if v is not None}
+        experiment.logger.log(final_logs, step=step_count)
+        
+    def _extract_esc_metrics(self, latest_td: TensorDictBase) -> Union[dict, None]:
+        try:
+            sr_tensor = latest_td.get((self.control_group, "output", "scaling_ratio"))
+            logits_tensor = latest_td.get((self.control_group, "output", "logits"))
+            scaling_ratio = self._process_trajectory(sr_tensor)
+            if scaling_ratio is None or logits_tensor is None: return None
+            T = len(scaling_ratio)
+            if T == 0: return None
+            
+            metrics = {"T": T, "time_steps": np.arange(T), "scaling_ratio": scaling_ratio}
+            diversity = logits_tensor[0].norm(dim=-1).std(dim=-1).cpu().numpy()
+            metrics["behavioral_diversity"] = diversity
+            metrics["mean_diversity"] = float(np.nanmean(diversity))
+            
+            grad_tensor = latest_td.get((self.control_group, "esc", "grad_estimate"))
+            if grad_tensor is not None:
+                metrics["gradient_estimate"] = float(grad_tensor.mean().item())
+                metrics["ge_magnitude"] = self._process_trajectory(grad_tensor.abs())
+            
+            j_mean_tensor = latest_td.get((self.control_group, "esc", "J_mean"))
+            if j_mean_tensor is not None: metrics["j_mean"] = float(j_mean_tensor.mean().item())
+
+            k_hat_tensor = latest_td.get((self.control_group, "esc", "k_hat"))
+            metrics["k_hat"] = float(k_hat_tensor.mean().item()) if k_hat_tensor is not None else 1.0
+            return metrics
+        except (KeyError, IndexError, AttributeError):
+            return None
+        
+    def _plot_control_dynamics(self, metrics: dict, step_count: int) -> go.Figure:
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(go.Scatter(x=metrics["time_steps"], y=metrics["scaling_ratio"], name="Scaling Ratio", line=dict(color='royalblue')), secondary_y=False)
+        fig.add_trace(go.Scatter(x=metrics["time_steps"], y=np.full(metrics["T"], metrics["k_hat"]), name="Learned k̂", line=dict(color='firebrick', dash='dash')), secondary_y=False)
+        if "behavioral_diversity" in metrics:
+            fig.add_trace(go.Scatter(x=metrics["time_steps"], y=metrics["behavioral_diversity"], name="Diversity", line=dict(color='green', dash='dot')), secondary_y=True)
+        fig.update_layout(title_text=f"<b>Control Dynamics at Step #{step_count}</b>", template="plotly_white", height=400)
+        fig.update_yaxes(title_text="Control Value", secondary_y=False)
+        fig.update_yaxes(title_text="Diversity", secondary_y=True)
+        return fig
+
+    def _plot_learning_evolution(self, step_count: int) -> go.Figure:
+        if len(self.esc_history_data) < 2: return go.Figure()
+        history, steps = self.esc_history_data, np.arange(len(self.esc_history_data))
+        k_hats = np.array([d["k_hat"] for d in history])
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=steps, y=k_hats, name='Learned k̂', mode='lines+markers', line=dict(color='firebrick')))
+        fig.update_layout(title_text=f"<b>k̂ Evolution up to Step #{step_count}</b>", xaxis_title="Episode", yaxis_title="k̂ Value", template="plotly_white", height=400)
+        return fig
+    
+    def _plot_gradient_evolution(self, step_count: int) -> go.Figure:
+        if len(self.esc_history_data) < 2: return go.Figure()
+        history, steps = self.esc_history_data, np.arange(len(self.esc_history_data))
+        grads = np.array([d["gradient_estimate"] for d in history])
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=steps, y=grads, name='Grad Estimate', mode='lines', line=dict(color='purple')))
+        fig.update_layout(title_text=f"<b>Gradient Estimate Evolution up to Step #{step_count}</b>", xaxis_title="Episode", yaxis_title="Gradient Estimate", template="plotly_white", height=400)
+        return fig
+    
+    def _plot_gradient_estimate(self, metrics: dict, step_count: int) -> Union[go.Figure, None]:
+        """
+        Visualizes the core components of the ESC gradient calculation.
+        Shows the dynamic Dither Signal that leads to the final, constant Gradient Estimate.
+        """
+        # Check if both required metrics are available
+        if "ge_magnitude" not in metrics or "dither" not in metrics:
+            return None
+
+        # Create a figure with two rows to show the relationship clearly
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                        subplot_titles=("Dynamic Input", "Calculated Output"))
+
+        # Row 1: The oscillating Dither Signal
+        fig.add_trace(go.Scatter(
+            x=metrics["time_steps"],
+            y=metrics["dither"],
+            name="Dither Signal",
+            line=dict(color='green')
+        ), row=1, col=1)
+
+        # Row 2: The constant resulting Gradient Estimate magnitude
+        fig.add_trace(go.Scatter(
+            x=metrics["time_steps"],
+            y=metrics["ge_magnitude"],
+            name="|Grad Estimate|",
+            line=dict(color='purple', dash='dash')
+        ), row=2, col=1)
+
+        fig.update_layout(
+            title_text=f"<b>Intra-Episode Gradient Calculation at Step #{step_count}</b>",
+            template="plotly_white",
+            height=500,
+            showlegend=False
+        )
+        fig.update_yaxes(title_text="Dither Value", row=1, col=1)
+        fig.update_yaxes(title_text="Gradient Mag.", row=2, col=1)
+        
+        return fig
+
+    def _plot_continuous_control_signal(self, step_count: int) -> go.Figure:
+        if not self.continuous_scaling_data: return go.Figure()
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        timesteps = np.arange(len(self.continuous_scaling_data))
+        scaling_data = np.array(self.continuous_scaling_data)
+        k_hat_data = np.array(self.continuous_k_hat_data)
+        diversity_data = np.array(self.continuous_diversity_data)
+
+        fig.add_trace(go.Scatter(x=timesteps, y=scaling_data, name="Scaling Ratio", line=dict(color='royalblue', width=1)), secondary_y=False)
+        fig.add_trace(go.Scatter(x=timesteps, y=k_hat_data, name="Learned k̂", line=dict(color='firebrick', dash='dash', width=2)), secondary_y=False)
+        fig.add_trace(go.Scatter(x=timesteps, y=diversity_data, name="Diversity", line=dict(color='green', dash='dot', width=1)), secondary_y=True)
+
+        fig.update_layout(
+            title_text=f"<b>Continuous Control Signal up to Step #{step_count}</b>",
+            xaxis_title="Global Timestep", template="plotly_white"
+        )
+        fig.update_yaxes(title_text="Control Value", secondary_y=False)
+        fig.update_yaxes(title_text="Diversity", secondary_y=True)
+        return fig
+
+    def _plot_gradient_landscape(self, step_count: int) -> go.Figure:
+        if len(self.esc_history_data) < 50: return go.Figure()
+        history = self.esc_history_data
+        k_hats = np.array([d["k_hat"] for d in history])
+        j_means = np.array([d["j_mean"] for d in history])
+        grads = np.array([d["gradient_estimate"] for d in history])
+        
+        gradient_sum, x_edges, y_edges = np.histogram2d(k_hats, j_means, bins=20, weights=grads)
+        counts, _, _ = np.histogram2d(k_hats, j_means, bins=20)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            avg_gradient = gradient_sum / counts
+        avg_gradient[np.isnan(avg_gradient)] = 0
+        
+        fig = go.Figure(data=go.Heatmap(
+            z=avg_gradient.T, x=(x_edges[:-1]+x_edges[1:])/2, y=(y_edges[:-1]+y_edges[1:])/2,
+            colorscale='RdBu', zmid=0
+        ))
+        fig.update_layout(
+            title_text=f"<b>Gradient Landscape up to Step #{step_count}</b>",
+            xaxis_title="k̂ (Learned Parameter)", yaxis_title="J_mean (Average Reward)"
+        )
+        return fig
+
+    def _plot_reward_scaling_scatter(self, step_count: int) -> go.Figure:
+        if not self.reward_scaling_data: return go.Figure()
+        ratios, rewards = zip(*self.reward_scaling_data)
+        fig = go.Figure(go.Scatter(
+            x=ratios, y=rewards, mode='markers',
+            marker=dict(size=5, opacity=0.6, color=np.arange(len(rewards)), colorscale='Viridis', showscale=True, colorbar_title="Time")
+        ))
+        fig.update_layout(
+            title_text=f"<b>Reward vs. Scaling Ratio up to Step #{step_count}</b>",
+            xaxis_title="Scaling Ratio", yaxis_title="Reward", template="plotly_white"
+        )
+        return fig
+

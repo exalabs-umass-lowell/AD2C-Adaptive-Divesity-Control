@@ -17,6 +17,7 @@ from AD2C.callbacks.SimpleProportionalController import SimpleProportionalContro
 from AD2C.callbacks.clusterSndCallback import clusterSndCallback
 from AD2C.callbacks.fixed_callbacks import *
 from AD2C.callbacks.clusterLogger import TrajectoryLoggerCallback
+from AD2C.callbacks.sndESLogger import TrajectorySNDLoggerCallback
 
 import benchmarl.models
 from benchmarl.algorithms import *
@@ -29,8 +30,9 @@ from benchmarl.hydra_config import (
     load_task_config_from_hydra,
     load_model_config_from_hydra,
 )
-from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpiricalConfig, HetControlMlpEmpiricalConfig
+from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical, HetControlMlpEmpiricalConfig
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc, HetControlMlpEscConfig
+from AD2C.models.het_control_mlp_snd import HetControlMlpEscSnd, HetControlMlpEscSndConfig
 # from AD2C.callback123 import *
 from AD2C.callbacks.SndLogCallback import SndLoggingCallback
 from AD2C.environments.vmas import render_callback
@@ -41,7 +43,7 @@ def setup(task_name):
     benchmarl.models.model_config_registry.update(
         {
             # "hetcontrolmlpempirical": HetControlMlpEmpiricalConfig,
-            "hetcontrolmlpesc": HetControlMlpEscConfig
+            "hetcontrolmlpsnd": HetControlMlpEscSndConfig
         }
     )
     if task_name == "vmas/navigation":
@@ -61,7 +63,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run: List[Callback], run_na
     critic_model_config = load_model_config_from_hydra(cfg.critic_model)
     model_config = load_model_config_from_hydra(cfg.model)
     
-    if "desired_snd" in cfg.model and isinstance(model_config, HetControlMlpEmpiricalConfig):
+    if "desired_snd" in cfg.model and isinstance(model_config, HetControlMlpEscSndConfig):
         model_config.desired_snd = float(cfg.model.desired_snd)
     
     if isinstance(algorithm_config, (MappoConfig, IppoConfig, MasacConfig, IsacConfig)):
@@ -84,7 +86,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run: List[Callback], run_na
     )
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo")
+@hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo_snd")
 def hydra_main(cfg: DictConfig) -> None:
     hydra_choices = HydraConfig.get().runtime.choices
     task_name = hydra_choices.task
@@ -112,12 +114,10 @@ def hydra_main(cfg: DictConfig) -> None:
         SndLoggingCallback(
             # control_group = "agents",
             ),
-
         # EscLoggerCallback(
         #     # control_group = "agents",
         # ),
-
-        TrajectoryLoggerCallback(
+        TrajectorySNDLoggerCallback(
             control_group = "agents",
         ),
         # TrajectoryDataLogger(
