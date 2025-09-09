@@ -16,6 +16,9 @@ action_loss_lr: 0.00003
 task:
   n_agents: 2
   agents_with_same_goal: 2
+  # collisions: True
+  # shared_rew: False
+
 
 experiment:
   save_folder: /home/grad/doc/2027/spatel2/MARL-UAV/outputs

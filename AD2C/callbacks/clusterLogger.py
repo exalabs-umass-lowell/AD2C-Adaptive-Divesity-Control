@@ -8,6 +8,7 @@ from tensordict import TensorDictBase
 from benchmarl.experiment import Experiment
 from benchmarl.experiment.callback import Callback
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc
+from AD2C.models.het_control_mlp_snd import HetControlMlpEscSnd
 from callbacks.utils import get_het_model
 
 
@@ -30,7 +31,9 @@ class TrajectoryLoggerCallback(Callback):
             return
         policy = self.experiment.group_policies[self.control_group]
         self.model = get_het_model(policy)
-        if isinstance(self.model, HetControlMlpEsc):
+        # if isinstance(self.model, HetControlMlpEsc):
+        if isinstance(self.model, HetControlMlpEscSnd):
+
             print(f"\nSUCCESS: Logger initialized for group '{self.control_group}'.")
         else:
             print(f"\nWARNING: A compatible model was not found. Disabling logger.\n")
@@ -38,7 +41,9 @@ class TrajectoryLoggerCallback(Callback):
 
     def on_batch_collected(self, batch: TensorDictBase):
         """Performs the model update and then logs the results."""
-        if not isinstance(self.model, HetControlMlpEsc): return
+        # if not isinstance(self.model, HetControlMlpEsc): return
+        if not isinstance(self.model, HetControlMlpEscSnd): return
+
         self.model._update_esc(batch)
         self._log_esc_scalars(self.experiment, batch)
         self._log_esc_plot(self.experiment, batch)
@@ -99,6 +104,8 @@ class TrajectoryLoggerCallback(Callback):
             "ESC/4_Intra-Episode_Gradient": self._plot_gradient_estimate(metrics, step_count),
             "ESC/7_Continuous_Signal": self._plot_continuous_control_signal(step_count),
             "ESC/current_k_hat": metrics["k_hat"], # This scalar log is kept
+            "ESC/mean_diversity": metrics["mean_diversity"]
+
         }
 
         # The history plots are now generated periodically

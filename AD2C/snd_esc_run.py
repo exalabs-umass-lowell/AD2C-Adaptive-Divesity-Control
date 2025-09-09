@@ -17,6 +17,7 @@ from AD2C.callbacks.SimpleProportionalController import SimpleProportionalContro
 from AD2C.callbacks.clusterSndCallback import clusterSndCallback
 from AD2C.callbacks.fixed_callbacks import *
 from AD2C.callbacks.clusterLogger import TrajectoryLoggerCallback
+from AD2C.callbacks.sndESLogger import TrajectorySNDLoggerCallback
 
 import benchmarl.models
 from benchmarl.algorithms import *
@@ -110,13 +111,13 @@ def hydra_main(cfg: DictConfig) -> None:
             
     # Callbacks for the experiment
     callbacks = [
-        # SndLoggingCallback(
-        #     # control_group = "agents",
-        #     ),
+        SndLoggingCallback(
+            # control_group = "agents",
+            ),
         # EscLoggerCallback(
         #     # control_group = "agents",
         # ),
-        TrajectoryLoggerCallback(
+        TrajectorySNDLoggerCallback(
             control_group = "agents",
         ),
         # TrajectoryDataLogger(

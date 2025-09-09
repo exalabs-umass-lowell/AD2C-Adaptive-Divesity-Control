@@ -18,12 +18,14 @@ from tensordict import TensorDict, TensorDictBase
 # Note: Ensure these paths are correct for your project structure.
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc
+from AD2C.models.het_control_mlp_snd import HetControlMlpEscSnd
+
 from AD2C.snd import compute_behavioral_distance
 from AD2C.utils import overflowing_logits_norm
 
 
 # This tuple defines the model classes that the recursive search will look for.
-HET_CONTROL_MODELS = (HetControlMlpEmpirical, HetControlMlpEsc)
+HET_CONTROL_MODELS = (HetControlMlpEmpirical, HetControlMlpEsc, HetControlMlpEscSnd)
 
 def _find_model_recursively(module: nn.Module) -> Optional[nn.Module]:
     """A helper function to recursively search for a compatible model."""

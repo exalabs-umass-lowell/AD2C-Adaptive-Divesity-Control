@@ -8,12 +8,13 @@ activation_class: torch.nn.Tanh
 
 # --- Extremum Seeking Control (ESC) Parameters ---
 
-reward_tau: 0.01
-diversity_tau: 0.01
+# reward_tau: 0.01
+snd_tau: 0.01
+tau: 0.01
 
 # The learning rate/gain (K) for the ESC integrator. Controls how quickly the
 # controller adapts the scaling factor.
-esc_gain: 10
+esc_gain: 100
 # esc_gain: 0
 
 
@@ -30,9 +31,8 @@ esc_frequency: 0.5
 
 # The initial value for the diversity scaling factor (k_hat). A good starting
 # point for the controller's search.
-# initial_k: 1.0
+initial_k: 1.0
 
-initial_desired_snd: 0
 # --- Standard Parameters ---
 
 # Whether to process the homogeneous part of the policy
