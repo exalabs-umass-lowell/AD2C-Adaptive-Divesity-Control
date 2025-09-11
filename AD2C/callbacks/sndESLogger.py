@@ -60,14 +60,23 @@ class TrajectorySNDLoggerCallback(Callback):
         keys_to_log = [
             ("output", "scaling_ratio"), ("output", "dither"),
             ("output", "measured_snd"), ("output", "target_snd"),
+    
             ("esc_learning", "k_hat"), ("esc_learning", "s_reward"), ("esc_learning", "J_mean"),
-            ("esc_learning", "grad_estimate"), ("esc_learning", "k_hat_update")
+            ("esc_learning", "grad_estimate"), ("esc_learning", "k_hat_update"),
+            
+            ("esc_learning","reward_mean"),("esc_learning", "hpf_out"),("esc_learning", "lpf_out"),
+            ("esc_learning", "gradient_final"),("esc_learning","k_hat"),("esc_learning","integral")
+
         ]
+
+        # "logits": out, "out_loc_norm": out_loc_norm, "actual_snd": distance, "target_snd": self.k_hat
+
+
         to_log = {}
         for ns, key in keys_to_log:
             val = batch.get((self.control_group, ns, key), None)
             if val is not None:
-                to_log[f"ESC_SND/{self.control_group}/{ns}/{key}"] = val.float().mean().item()
+                to_log[f"controller_learning/{self.control_group}/{key}"] = val.float().mean().item()
         if to_log: experiment.logger.log(to_log, step=self.collect_step_count)
 
     def _log_esc_plot(self, experiment: 'Experiment', latest_td: TensorDictBase):
@@ -94,16 +103,16 @@ class TrajectorySNDLoggerCallback(Callback):
         step_count = self.collect_step_count
         
         logs_to_push = {
-            "ESC_SND/1_Control_Dynamics": self._plot_control_dynamics(metrics, step_count),
-            "ESC_SND/2_Continuous_Diversity_Control": self._plot_diversity_control_signal(step_count),
-            "ESC_SND/3_Target_Diversity_Evolution": self._plot_learning_evolution(step_count),
-            "ESC_SND/current_target_diversity": metrics["k_hat_after_update"],
-            "ESC_SND/mean_measured_diversity": metrics["mean_measured_diversity"]
+            "esc/1_Control_Dynamics": self._plot_control_dynamics(metrics, step_count),
+            "esc/2_Continuous_Diversity_Control": self._plot_diversity_control_signal(step_count),
+            "esc/3_Target_Diversity_Evolution": self._plot_learning_evolution(step_count),
+            "collection/current_target_diversity": metrics["k_hat_after_update"],
+            "collection/mean_measured_diversity": metrics["mean_measured_diversity"]
         }
 
         if self.collect_step_count % 100 == 0:
-            logs_to_push["ESC_SND/4_Reward_vs_Diversity_Scatter"] = self._plot_reward_scaling_scatter(step_count)
-            logs_to_push["ESC_SND/5_Gradient_Landscape"] = self._plot_gradient_landscape(step_count)
+            logs_to_push["esc/4_Reward_vs_Diversity_Scatter"] = self._plot_reward_scaling_scatter(step_count)
+            logs_to_push["esc/5_Gradient_Landscape"] = self._plot_gradient_landscape(step_count)
         
         final_logs = {k: v for k, v in logs_to_push.items() if v is not None}
         experiment.logger.log(final_logs, step=step_count)

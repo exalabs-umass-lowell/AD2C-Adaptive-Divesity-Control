@@ -29,7 +29,7 @@ from benchmarl.hydra_config import (
     load_task_config_from_hydra,
     load_model_config_from_hydra,
 )
-from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpiricalConfig, HetControlMlpEmpiricalConfig
+from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpiricalConfig
 from AD2C.models.het_control_mlp_esc import HetControlMlpEsc, HetControlMlpEscConfig
 # from AD2C.callback123 import *
 from AD2C.callbacks.SndLogCallback import SndLoggingCallback
@@ -61,7 +61,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run: List[Callback], run_na
     critic_model_config = load_model_config_from_hydra(cfg.critic_model)
     model_config = load_model_config_from_hydra(cfg.model)
     
-    if "desired_snd" in cfg.model and isinstance(model_config, HetControlMlpEmpiricalConfig):
+    if "desired_snd" in cfg.model and isinstance(model_config, HetControlMlpEscConfig):
         model_config.desired_snd = float(cfg.model.desired_snd)
     
     if isinstance(algorithm_config, (MappoConfig, IppoConfig, MasacConfig, IsacConfig)):

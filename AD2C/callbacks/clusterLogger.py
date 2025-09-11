@@ -61,13 +61,17 @@ class TrajectoryLoggerCallback(Callback):
         keys_to_log = [
             ("output", "logits"), ("output", "scaling_ratio"), ("output", "dither"),
             ("esc", "k_hat"), ("esc", "s_reward"), ("esc", "J_mean"),
-            ("esc", "grad_estimate"), ("esc", "k_hat_update"),("esc", "s_reward_new")
+            ("esc", "grad_estimate"), ("esc", "k_hat_update"),("esc", "s_reward_new"),
+        
+            ("esc_learning","reward_mean"),("esc_learning", "hpf_out"),("esc_learning", "lpf_out"),
+            ("esc_learning", "gradient_final"),("esc_learning","k_hat"),("esc_learning","integral")
+
         ]
         to_log = {}
         for ns, key in keys_to_log:
             val = batch.get((self.control_group, ns, key), None)
             if val is not None:
-                to_log[f"ESC/{self.control_group}/{ns}/{key}"] = val.float().mean().item()
+                to_log[f"ESC/{ns}/{key}"] = val.float().mean().item()
         if to_log: experiment.logger.log(to_log, step=self.collect_step_count)
 
     # In your TrajectoryLoggerCallback class...

@@ -10,22 +10,22 @@ activation_class: torch.nn.Tanh
 
 # reward_tau: 0.01
 snd_tau: 0.01
-tau: 0.01
+# tau: 0.01
 
 # The learning rate/gain (K) for the ESC integrator. Controls how quickly the
 # controller adapts the scaling factor.
-esc_gain: 100
+# esc_gain: 100
 # esc_gain: 0
 
 
 # The amplitude (a) of the dither signal. This is the size of the "jiggle"
 # applied to the scaling factor to probe the performance gradient.
-esc_amplitude: 0.25
+# esc_amplitude: 0
 # esc_amplitude: 0
 
 
 # The frequency (ω) of the dither signal. Controls how fast the "jiggle" oscillates.
-esc_frequency: 0.5
+# esc_frequency: 0.25
 # esc_frequency: 0
 
 
@@ -44,4 +44,15 @@ probabilistic: null
 # Parameter filled dynamically. Do not change.
 scale_mapping: null
 
+bootstrap_from_desired_snd: False
+
 # desired_snd: 0.5
+
+
+sampling_period: 0.1
+disturbance_frequency: 1.0
+disturbance_magnitude: 1
+integrator_gain: 10000
+high_pass_cutoff_frequency: 1.0
+low_pass_cutoff_frequency: 1.0
+use_adapter : False 
