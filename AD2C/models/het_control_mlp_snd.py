@@ -200,7 +200,7 @@ class HetControlMlpEscSnd(Model):
         # dithered_target_diversity = self.k_hat + current_dither
 
         current_dither = self.disturbance_magnitude * torch.sin(self.wt)
-        dithered_target_diversity = self.k_hat + current_dither
+        target_diversity = self.k_hat + current_dither
 
         # # 2. Measure the raw behavioral diversity for the current step
         # raw_distance = self.estimate_snd(input)
@@ -252,9 +252,9 @@ class HetControlMlpEscSnd(Model):
             scaling_ratio = 1.0
         else:  # DiCo scaling
             scaling_ratio = torch.where(
-                distance != self.k_hat,
+                distance != target_diversity,
                 # self.k_hat / distance,
-                dithered_target_diversity / distance,
+                target_diversity / distance,
                 1,
             )
 
@@ -461,7 +461,6 @@ class HetControlMlpEscSnd(Model):
             self.to(target)
             self._current_device = target
 
-# --- The New Config Class ---
 @dataclass
 class HetControlMlpEscSndConfig(ModelConfig):
     activation_class: Type[nn.Module] = MISSING

@@ -52,7 +52,7 @@ bootstrap_from_desired_snd: False
 sampling_period: 0.1
 disturbance_frequency: 1.0
 disturbance_magnitude: 1
-integrator_gain: 10000
+integrator_gain: 0
 high_pass_cutoff_frequency: 1.0
 low_pass_cutoff_frequency: 1.0
 use_adapter : False 
