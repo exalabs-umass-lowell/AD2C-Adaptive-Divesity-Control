@@ -61,12 +61,11 @@ class TrajectorySNDLoggerCallback(Callback):
             ("output", "scaling_ratio"), ("output", "dither"),
             ("output", "measured_snd"), ("output", "target_snd"),
     
-            ("esc_learning", "k_hat"), ("esc_learning", "s_reward"), ("esc_learning", "J_mean"),
-            ("esc_learning", "grad_estimate"), ("esc_learning", "k_hat_update"),
+            # ("esc_learning", "k_hat"), ("esc_learning", "s_reward"), ("esc_learning", "J_mean"),
+            # ("esc_learning", "grad_estimate"), ("esc_learning", "k_hat_update"),("esc_learning", "m2_sqrt"),
             
             ("esc_learning","reward_mean"),("esc_learning", "hpf_out"),("esc_learning", "lpf_out"),
-            ("esc_learning", "gradient_final"),("esc_learning","k_hat"),("esc_learning","integral")
-
+            ("esc_learning", "gradient_final"),("esc_learning","k_hat"),("esc_learning","integral"),
         ]
 
         # "logits": out, "out_loc_norm": out_loc_norm, "actual_snd": distance, "target_snd": self.k_hat

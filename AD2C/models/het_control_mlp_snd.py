@@ -90,7 +90,7 @@ class HetControlMlpEscSnd(Model):
 
         self.bootstrap_from_desired_snd = bootstrap_from_desired_snd
 
-        self._setup_esc_and_snd_state(initial_k, self.snd_tau)
+        self._setup_esc_and_snd_state(self.k_hat_initial, self.snd_tau)
         self._setup_networks()
         self.scale_extractor = (
             NormalParamExtractor(scale_mapping=scale_mapping) if scale_mapping is not None else None
@@ -278,7 +278,10 @@ class HetControlMlpEscSnd(Model):
             )  # For logging
         
         # 8. Log outputs and update the tensordict
-        
+        tensordict.set(
+            (self.agent_group, "k_hat"),
+            self.estimated_snd.expand(tensordict.get_item_shape(self.agent_group)),
+        )
         tensordict.set(
             (self.agent_group, "estimated_snd"),
             self.estimated_snd.expand(tensordict.get_item_shape(self.agent_group)),
@@ -290,6 +293,15 @@ class HetControlMlpEscSnd(Model):
                 if not isinstance(scaling_ratio, torch.Tensor)
                 else scaling_ratio.expand_as(out)
             ),
+        )
+        
+        tensordict.set(
+            (self.agent_group, "current_dither"),
+            target_diversity.expand(tensordict.get_item_shape(self.agent_group)),
+        )
+        tensordict.set(
+            (self.agent_group, "target_diversity"),
+            target_diversity.expand(tensordict.get_item_shape(self.agent_group)),
         )
         tensordict.set((self.agent_group, "logits"), out)
         tensordict.set((self.agent_group, "out_loc_norm"), out_loc_norm)
@@ -340,7 +352,8 @@ class HetControlMlpEscSnd(Model):
 
         with torch.no_grad():
             # The 'cost' is the mean reward from the environment
-            cost = tensordict.get(reward_key).mean()
+            cost = (tensordict.get(reward_key).mean())
+
 
             # 1. High-pass filter the cost to isolate changes
             high_pass_output = self.high_pass_filter(cost)
@@ -382,28 +395,29 @@ class HetControlMlpEscSnd(Model):
             log_data = {
                 "reward_mean": cost, "hpf_out": high_pass_output, "lpf_out": low_pass_output,
                 "gradient_final": gradient, "k_hat": self.k_hat, "integral": self.integral,
+                "m2_sqrt": torch.sqrt(self.m2),
             }
             self._log_to_tensordict(tensordict, "esc_learning", log_data)
 
-    def _calculate_esc_update(self, reward: torch.Tensor, s_reward_old: torch.Tensor, last_dither: torch.Tensor) -> Dict[str, torch.Tensor]:
-        # This function is identical to the one in HetControlMlpEsc
-        j_mean = reward.mean()
-        s_reward_new = s_reward_old * (1 - self.esc_tau) + j_mean * self.esc_tau
-        gradient_estimate = s_reward_new * last_dither
-        k_hat_update = self.esc_gain * gradient_estimate
-        return {
-            "J_mean": j_mean, "s_reward_new": s_reward_new,
-            "gradient_estimate": gradient_estimate, "k_hat_update": k_hat_update,
-        }
+    # def _calculate_esc_update(self, reward: torch.Tensor, s_reward_old: torch.Tensor, last_dither: torch.Tensor) -> Dict[str, torch.Tensor]:
+    #     # This function is identical to the one in HetControlMlpEsc
+    #     j_mean = reward.mean()
+    #     s_reward_new = s_reward_old * (1 - self.esc_tau) + j_mean * self.esc_tau
+    #     gradient_estimate = s_reward_new * last_dither
+    #     k_hat_update = self.esc_gain * gradient_estimate
+    #     return {
+    #         "J_mean": j_mean, "s_reward_new": s_reward_new,
+    #         "gradient_estimate": gradient_estimate, "k_hat_update": k_hat_update,
+    #     }
 
-    def _get_dither_signal(self) -> torch.Tensor:
-        """ Generates the sinusoidal dither signal for ESC. """
-        with torch.no_grad():
-            self.time_step.add_(1)
-            t = self.time_step.to(dtype=torch.float32)
-            current_dither = self.esc_amplitude * torch.sin(self.esc_frequency * t)
-            self.last_dither.copy_(current_dither)
-            return current_dither
+    # def _get_dither_signal(self) -> torch.Tensor:
+    #     """ Generates the sinusoidal dither signal for ESC. """
+    #     with torch.no_grad():
+    #         self.time_step.add_(1)
+    #         t = self.time_step.to(dtype=torch.float32)
+    #         current_dither = self.esc_amplitude * torch.sin(self.esc_frequency * t)
+    #         self.last_dither.copy_(current_dither)
+    #         return current_dither
     
     # @torch.no_grad()
     def estimate_snd(self, obs: torch.Tensor):
@@ -437,14 +451,14 @@ class HetControlMlpEscSnd(Model):
             tensor_to_log = tensor.expand(agent_group_shape) if tensor.numel() == 1 and len(agent_group_shape) > 0 else tensor
             td.set((self.agent_group, namespace, key), tensor_to_log)
 
-    def _log_outputs(self, td: TensorDictBase, out: torch.Tensor, scaling_ratio: torch.Tensor, dither: torch.Tensor, distance: torch.Tensor):
-        loc_to_normalize = out.chunk(2, dim=-1)[0] if self.probabilistic else out
-        out_loc_norm = overflowing_logits_norm(loc_to_normalize, self.action_spec[self.agent_group, "action"])
-        log_data = {
-            "logits": out, "scaling_ratio": scaling_ratio, "dither": dither,
-            "out_loc_norm": out_loc_norm, "actual_snd": distance, "target_snd": self.k_hat
-        }
-        self._log_to_tensordict(td, "output", log_data)
+    # def _log_outputs(self, td: TensorDictBase, out: torch.Tensor, scaling_ratio: torch.Tensor, dither: torch.Tensor, distance: torch.Tensor):
+    #     loc_to_normalize = out.chunk(2, dim=-1)[0] if self.probabilistic else out
+    #     out_loc_norm = overflowing_logits_norm(loc_to_normalize, self.action_spec[self.agent_group, "action"])
+    #     log_data = {
+    #         "logits": out, "scaling_ratio": scaling_ratio, "dither": dither,
+    #         "out_loc_norm": out_loc_norm, "actual_snd": distance, "target_snd": self.k_hat
+    #     }
+    #     self._log_to_tensordict(td, "output", log_data)
 
     def process_shared_out(self, logits: torch.Tensor) -> torch.Tensor:
         if not self.probabilistic and self.process_shared:
@@ -465,13 +479,6 @@ class HetControlMlpEscSnd(Model):
 class HetControlMlpEscSndConfig(ModelConfig):
     activation_class: Type[nn.Module] = MISSING
     num_cells: Sequence[int] = MISSING
-
-    # ESC params
-    # esc_gain: float = MISSING
-    # esc_amplitude: float = MISSING
-    # esc_frequency: float = MISSING
-    # initial_k: float = MISSING       # Initial target diversity
-    # tau: float = MISSING             # Reward smoothing tau
     
     sampling_period: float = MISSING
     disturbance_frequency: float = MISSING
