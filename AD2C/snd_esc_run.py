@@ -18,6 +18,7 @@ from AD2C.callbacks.clusterSndCallback import clusterSndCallback
 from AD2C.callbacks.fixed_callbacks import *
 from AD2C.callbacks.clusterLogger import TrajectoryLoggerCallback
 from AD2C.callbacks.sndESLogger import TrajectorySNDLoggerCallback
+from AD2C.callbacks.performaceLoggerCallback import performaceLoggerCallback
 
 import benchmarl.models
 from benchmarl.algorithms import *
@@ -123,6 +124,11 @@ def hydra_main(cfg: DictConfig) -> None:
         # TrajectoryDataLogger(
         #     save_path="/home/svarp/Desktop/Projects/AD2C/Saved Run Tables"
         #     ),
+        performaceLoggerCallback(
+            control_group = "agents",
+            initial_snd=cfg.model.initial_k,
+
+        ),
         NormLoggerCallback(),
         ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
     ]

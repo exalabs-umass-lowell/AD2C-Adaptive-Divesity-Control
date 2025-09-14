@@ -31,7 +31,7 @@ snd_tau: 0.01
 
 # The initial value for the diversity scaling factor (k_hat). A good starting
 # point for the controller's search.
-initial_k: 1.0
+initial_k: 0.0
 
 # --- Standard Parameters ---
 
@@ -51,8 +51,8 @@ bootstrap_from_desired_snd: False
 
 sampling_period: 0.1
 disturbance_frequency: 1.0
-disturbance_magnitude: 1
-integrator_gain: 0
+disturbance_magnitude: 0.1
+integrator_gain: 100
 high_pass_cutoff_frequency: 1.0
 low_pass_cutoff_frequency: 1.0
-use_adapter : False 
+use_adapter : True 

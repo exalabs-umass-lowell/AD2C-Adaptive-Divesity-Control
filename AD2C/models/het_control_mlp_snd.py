@@ -60,16 +60,11 @@ class HetControlMlpEscSnd(Model):
         self.probabilistic = probabilistic
         self.scale_mapping = scale_mapping
         self.process_shared = process_shared
-
-        # ESC parameters for learning k_hat
-        # self.esc_gain = float(esc_gain)
-        # self.esc_amplitude = float(esc_amplitude)
-        # self.esc_frequency = float(esc_frequency)
         
         self.dt = sampling_period
         self.disturbance_frequency = disturbance_frequency
         self.disturbance_magnitude = disturbance_magnitude
-        self.integrator_gain = integrator_gain # Should be positive for reward maximization
+        self.integrator_gain = torch.tensor(integrator_gain, device = self.device)# Should be positive for reward maximization
         self.use_adapter = use_adapter
 
         self.k_hat_initial = initial_k # Store the initial value for the integrator
@@ -134,53 +129,6 @@ class HetControlMlpEscSnd(Model):
             num_cells=self.num_cells, device=self.device,
         )
 
-    # def _forward(self, 
-    #              tensordict: TensorDictBase,
-    #                **kwargs) -> TensorDictBase:
-    #     input_tensor = tensordict.get(self.in_key)
-    #     self._ensure_device(input_tensor.device)
-
-    #     # 1. Get the dither signal and target diversity for ESC
-    #     current_dither = self._get_dither_signal()
-    #     dithered_target_diversity = self.k_hat + current_dither
-
-    #     # 2. Measure the raw behavioral diversity for the current step
-    #     raw_distance = self.estimate_snd(input_tensor)
-
-    #     # 3. Calculate the smoothed diversity using the previous estimate and the current raw value
-    #     if self.estimated_snd.isnan().any():
-    #         current_smoothed_distance = raw_distance
-    #     else:
-    #         current_smoothed_distance = (1 - self.snd_tau) * self.estimated_snd + self.snd_tau * raw_distance
-        
-    #     # 4. Calculate the scaling ratio using this newly computed smoothed diversity
-    #     #    (This correctly mimics the HetControlMlpEmpirical logic)
-    #     scaling_ratio = dithered_target_diversity / current_smoothed_distance.clamp(min=1e-6)
-
-    #     # 5. Update the stored diversity estimate for the *next* forward pass
-    #     with torch.no_grad():
-    #         self.estimated_snd.copy_(current_smoothed_distance)
-
-    #     # 6. Get network outputs
-    #     shared_out = self.shared_mlp(input_tensor)
-    #     agent_out = self.agent_mlps(input_tensor) # Use the raw agent output
-
-    #     shared_out = self.process_shared_out(shared_out)
-
-    #     # 7. Apply scaling directly to the raw agent output (NO normalization)
-    #     if self.probabilistic:
-    #         shared_loc, shared_scale = shared_out.chunk(2, -1)
-    #         agent_loc = shared_loc + agent_out * scaling_ratio
-    #         out = torch.cat([agent_loc, shared_scale], dim=-1)
-    #     else:
-    #         out = shared_out + agent_out * scaling_ratio
-        
-    #     # 8. Log outputs and update the tensordict
-    #     self._log_outputs(tensordict, out, scaling_ratio, current_dither, raw_distance)
-    #     tensordict.set(self.out_key, out)
-    #     return tensordict
-
-    
     def _forward(self, 
                 tensordict: TensorDictBase,
                 agent_index: int = None,
@@ -191,31 +139,18 @@ class HetControlMlpEscSnd(Model):
         
 
         input = tensordict.get(self.in_key)
-        # self._ensure_device(input.device)
-
-        # --------------------
-        
-        # # 1. Get the dither signal and target diversity for ESC
-        # current_dither = self._get_dither_signal()
-        # dithered_target_diversity = self.k_hat + current_dither
 
         current_dither = self.disturbance_magnitude * torch.sin(self.wt)
+
+        # Change every Frame
+        with torch.no_grad():
+            self.wt += self.disturbance_frequency * self.dt
+            if self.wt > 2 * np.pi:
+                self.wt -= 2 * np.pi
+
         target_diversity = self.k_hat + current_dither
 
-        # # 2. Measure the raw behavioral diversity for the current step
-        # raw_distance = self.estimate_snd(input)
-
-        # # 3. Calculate the smoothed diversity using the previous estimate and the current raw value
-        # if self.estimated_snd.isnan().any():
-        #     current_smoothed_distance = raw_distance
-        # else:
-        #     current_smoothed_distance = (1 - self.snd_tau) * self.estimated_snd + self.snd_tau * raw_distance
-
-        # # 5. Update the stored diversity estimate for the *next* forward pass
-        # with torch.no_grad():
-        #     self.estimated_snd.copy_(current_smoothed_distance)
-
-        # ------------ ES Updates --------------------                                          
+        target_diversity = torch.clamp(target_diversity, min=0.0)
 
         shared_out = self.shared_mlp.forward(input)
         if agent_index is None:  # Gather outputs for all agents on the obs
@@ -230,33 +165,62 @@ class HetControlMlpEscSnd(Model):
 
         shared_out = self.process_shared_out(shared_out)
 
-        if (
-            self.k_hat > 0
-            and torch.is_grad_enabled()  # we are training
-            and compute_estimate
-            and self.n_agents > 1
-        ):
-            # Update \widehat{SND}
-            distance = self.estimate_snd(input)
+        if (self.k_hat > 0 and torch.is_grad_enabled() and compute_estimate and self.n_agents > 1):
+            distance, agent_dist = self.estimate_snd(input)
+            
+            distances_to_log = agent_dist if agent_dist.ndim > 1 else agent_dist.unsqueeze(0)
+            tensordict.set((self.agent_group, "pairwise_distance"), distances_to_log)
+
             if update_estimate:
                 self.estimated_snd[:] = distance.detach()
         else:
             distance = self.estimated_snd
-        if self.k_hat == 0 or self.k_hat < -1:
-            scaling_ratio = 0.0
-        elif (
-            self.k_hat == -1   # Unconstrained networks
-            or distance.isnan().any()  # It is the first iteration
-            or self.n_agents == 1
+
+        if (
+            self.k_hat == -1          # Your requested "fully independent" mode
+            or distance.isnan().any()   # First iteration before SND is calculated
+            or self.n_agents == 1       # No diversity control needed for one agent
         ):
             scaling_ratio = 1.0
-        else:  # DiCo scaling
+        # 2. Next, check for cases where scaling should be 0.0 (homogeneity)
+        #    This now correctly handles ALL negative k_hat values (except -1) and zero.
+        elif self.k_hat <= 0:
+            scaling_ratio = 0.0
+        # 3. Otherwise, perform active diversity control.
+        else:  # This block now only runs for k_hat > 0
             scaling_ratio = torch.where(
                 distance != target_diversity,
-                # self.k_hat / distance,
                 target_diversity / distance,
-                1,
+                torch.tensor(1.0, device=self.device) # Use a tensor for type consistency
             )
+
+        # if (
+        #     self.k_hat > 0
+        #     and torch.is_grad_enabled()  # we are training
+        #     and compute_estimate
+        #     and self.n_agents > 1
+        # ):
+        #     # Update \widehat{SND}
+        #     distance = self.estimate_snd(input)
+        #     if update_estimate:
+        #         self.estimated_snd[:] = distance.detach()
+        # else:
+        #     distance = self.estimated_snd
+        # if self.k_hat == 0 or self.k_hat < -1:
+        #     scaling_ratio = 0.0
+        # elif (
+        #     self.k_hat == -1   # Unconstrained networks
+        #     or distance.isnan().any()  # It is the first iteration
+        #     or self.n_agents == 1
+        # ):
+        #     scaling_ratio = 1.0
+        # else:  # DiCo scaling
+        #     scaling_ratio = torch.where(
+        #         distance != target_diversity,
+        #         # self.k_hat / distance,
+        #         target_diversity / distance,
+        #         1,
+        #     )
 
 
         if self.probabilistic:
@@ -280,7 +244,7 @@ class HetControlMlpEscSnd(Model):
         # 8. Log outputs and update the tensordict
         tensordict.set(
             (self.agent_group, "k_hat"),
-            self.estimated_snd.expand(tensordict.get_item_shape(self.agent_group)),
+            self.k_hat.expand(tensordict.get_item_shape(self.agent_group)),
         )
         tensordict.set(
             (self.agent_group, "estimated_snd"),
@@ -297,7 +261,7 @@ class HetControlMlpEscSnd(Model):
         
         tensordict.set(
             (self.agent_group, "current_dither"),
-            target_diversity.expand(tensordict.get_item_shape(self.agent_group)),
+            current_dither.expand(tensordict.get_item_shape(self.agent_group)),
         )
         tensordict.set(
             (self.agent_group, "target_diversity"),
@@ -314,67 +278,70 @@ class HetControlMlpEscSnd(Model):
 
     # Logs Controller Values
 
-    # def _update_esc(self, tensordict: TensorDictBase) -> None:
-    #     """ Performs the ESC update step to learn the optimal target diversity (k_hat). """
-    #     # This function is identical to the one in HetControlMlpEsc
-    #     reward_key = ("next", self.agent_group, "reward")
-    #     if reward_key not in tensordict.keys(include_nested=True):
-    #         return
-    #     with torch.no_grad():
-    #         reward = tensordict.get(reward_key)
-    #         if reward.abs().sum() < 1e-6:
-    #             return
-            
-    #         esc_updates = self._calculate_esc_update(reward, self.s_reward, self.last_dither)
-    #         self.s_reward.copy_(esc_updates["s_reward_new"])
-    #         self.k_hat.add_(esc_updates["k_hat_update"])
-            
-    #         log_data = {
-    #             "reward_raw": reward,
-    #             "J_mean": esc_updates["J_mean"], 
-    #             "s_reward": self.s_reward,
-    #             "grad_estimate": esc_updates["gradient_estimate"],
-    #             "k_hat_update": esc_updates["k_hat_update"], 
-    #             "k_hat": self.k_hat,
-    #         }
-    #         self._log_to_tensordict(tensordict, "esc_learning", log_data)
-    
-    # In the HetControlMlpEscSnd class:
-
     def _update_esc(self, tensordict: TensorDictBase) -> None:
         """
         Performs the full ESC update from the paper to learn the optimal target diversity (k_hat).
         This now includes high-pass/low-pass filtering and the adaptive step size.
         """
-        reward_key = ("next", self.agent_group, "reward")
+        reward_key = (self.agent_group, "episode_reward")
+        dither_key = (self.agent_group, "current_dither")
+
         if reward_key not in tensordict.keys(include_nested=True):
             return
 
         with torch.no_grad():
             # The 'cost' is the mean reward from the environment
-            cost = (tensordict.get(reward_key).mean())
+            # cost = (tensordict.get(reward_key).mean())
+            rewards = tensordict.get(reward_key)
+
+            dither = tensordict.get(dither_key)
+
+            if rewards.shape != dither.shape:
+                # This can happen if reward is per-agent. Average over the agent dimension.
+                if rewards.ndim > dither.ndim:
+                    rewards = rewards.mean(dim=-1, keepdim=False)
+                if rewards.shape != dither.shape:
+                    # If shapes still don't match, we can't proceed.
+                    print(f"Warning: Reward shape {rewards.shape} and dither shape {dither.shape} still do not match after averaging. Skipping ESC update.")
+                    return
 
 
             # 1. High-pass filter the cost to isolate changes
-            high_pass_output = self.high_pass_filter(cost)
+            high_pass_output = self.high_pass_filter(rewards)
 
             # 2. Demodulate to get the raw gradient signal
-            demodulation_signal = torch.sin(self.wt)
-            low_pass_input = high_pass_output * demodulation_signal
+            # demodulation_signal = torch.sin(self.wt)
+            low_pass_input = high_pass_output * dither
 
             # 3. Low-pass filter to get a clean gradient estimate
             low_pass_output = self.low_pass_filter(low_pass_input)
 
+
+
             # 4. (Optional) Use the adapter to scale the gradient
+            # if self.use_adapter:
+            #     self.m2 = self.b2 * self.m2 + (1 - self.b2) * torch.pow(low_pass_output, 2)
+            #     m2_sqrt = torch.sqrt(self.m2)
+            #     if m2_sqrt > 1.0:
+            #         gradient = low_pass_output / (m2_sqrt + self.epsilon)
+            #     else:
+            #         gradient = low_pass_output * m2_sqrt
+            # else:
+            #     gradient = low_pass_output
+            
             if self.use_adapter:
-                self.m2 = self.b2 * self.m2 + (1 - self.b2) * torch.pow(low_pass_output, 2)
+                grad = low_pass_output.mean() # This is a scalar
+                # The power should be on the scalar 'grad'
+                self.m2 = self.b2 * self.m2 + (1 - self.b2) * torch.pow(grad, 2)
                 m2_sqrt = torch.sqrt(self.m2)
-                if m2_sqrt > 1.0:
-                    gradient = low_pass_output / (m2_sqrt + self.epsilon)
+
+                if m2_sqrt.item() > 1.0: # Use .item() for comparison with a scalar
+                    gradient = grad / (m2_sqrt + self.epsilon)
                 else:
-                    gradient = low_pass_output * m2_sqrt
+                    gradient = grad * m2_sqrt
             else:
-                gradient = low_pass_output
+                gradient = low_pass_output.mean()
+
 
             # 5. Integrate the gradient to update the search value
             # Note: We use `self.integrator_gain` (should be positive to maximize reward)
@@ -382,20 +349,21 @@ class HetControlMlpEscSnd(Model):
             
             # The setpoint is the initial value plus the integral
             setpoint = self.k_hat_initial + self.integral # We need to store initial_k as self.k_hat_initial
+            setpoint = torch.clamp(setpoint, min=0.0)
             
             # 6. Update k_hat with the new setpoint
             self.k_hat.copy_(setpoint)
 
-            # 7. Update the perturbation phase for the next step
-            self.wt += self.disturbance_frequency * self.dt
-            if self.wt > 2 * np.pi:
-                self.wt -= 2 * np.pi
+            # # 7. Update the perturbation phase for the next step
+            # self.wt += self.disturbance_frequency * self.dt
+            # if self.wt > 2 * np.pi:
+            #     self.wt -= 2 * np.pi
                 
             # --- Logging ---
             log_data = {
-                "reward_mean": cost, "hpf_out": high_pass_output, "lpf_out": low_pass_output,
+                "reward_mean": rewards, "hpf_out": high_pass_output, "lpf_out": low_pass_output,
                 "gradient_final": gradient, "k_hat": self.k_hat, "integral": self.integral,
-                "m2_sqrt": torch.sqrt(self.m2),
+                "m2_sqrt": torch.sqrt(self.m2), "wt": self.wt
             }
             self._log_to_tensordict(tensordict, "esc_learning", log_data)
 
@@ -430,11 +398,15 @@ class HetControlMlpEscSnd(Model):
             agent_outputs = agent_net(obs)
             agent_actions.append(agent_outputs)
 
-        distance = (
-            compute_behavioral_distance(agent_actions=agent_actions, just_mean=True)
-            .mean()
-            .unsqueeze(-1)
-        )  # Compute the SND if these unscaled policies
+        # distance = (
+        #     compute_behavioral_distance(agent_actions=agent_actions, just_mean=True)
+        #     .mean()
+        #     .unsqueeze(-1)
+        # )  # Compute the SND if these unscaled policies
+
+        agent_dis = compute_behavioral_distance(agent_actions= agent_actions, just_mean = True)
+
+        distance = agent_dis.mean().unsqueeze(-1)
 
         if self.estimated_snd.isnan().any():  # First iteration
             distance = self.desired_snd if self.bootstrap_from_desired_snd else distance
@@ -442,7 +414,7 @@ class HetControlMlpEscSnd(Model):
             # Soft update of \widehat{SND}
             distance = (1 - self.snd_tau) * self.estimated_snd + self.snd_tau * distance
 
-        return distance
+        return distance, agent_dis
 
     # Helper functions for logging, processing, and device management remain largely the same
     def _log_to_tensordict(self, td: TensorDictBase, namespace: str, data: Dict[str, torch.Tensor]):
