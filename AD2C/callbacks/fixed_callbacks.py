@@ -41,8 +41,10 @@ class NormLoggerCallback(Callback):
                 (group, "logits"), 
                 (group, "observation"),
                 (group, "out_loc_norm"), 
-                (group, "estimated_snd"), 
+                (group, "estimated_snd"),
+                (group, "target_diversity"), 
                 (group, "scaling_ratio"),
+                (group, "current_dither"),
                 # New keys for the ESC model
                 (group, "k_hat"),
                 (group, "esc_dither"),
