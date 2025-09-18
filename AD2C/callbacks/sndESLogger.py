@@ -96,13 +96,13 @@ class TrajectorySNDLoggerCallback(Callback):
         if (self.control_group, "esc_learning") in batch.keys(include_nested=True):
             esc_learning_keys = [
                 "reward_mean", "hpf_out", "lpf_out", "gradient_final",
-                "k_hat", "integral", "m2_sqrt", "wt"
+                "k_hat", "integral", "m2_sqrt", "wt", 
             ]
             for key in esc_learning_keys:
                 val = batch.get((self.control_group, "esc_learning", key), None)
                 if val is not None:
                     # Log the post-update k_hat under a distinct name to avoid confusion
-                    log_key = "k_hat_update" if key == "k_hat" else key
+                    log_key = "target_diversity" if key == "k_hat" else key
                     to_log[f"controller_learning/{self.control_group}/{log_key}"] = val.float().mean().item()
 
         if to_log:

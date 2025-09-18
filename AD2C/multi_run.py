@@ -6,23 +6,18 @@ import hydra
 import os
 import torch
 import numpy as np
-import pickle # Added for saving/loading results
+import pickle
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from typing import List
 
-from AD2C.callbacks.pIControllerCallback import *
-from AD2C.callbacks.SndCallback import SndCallback as SndCallbackClass
-from AD2C.callbacks.SimpleProportionalController import SimpleProportionalController
-from AD2C.callbacks.clusterSndCallback import clusterSndCallback
+# --- Your imports ---
+from AD2C.callbacks.esc_callback import ExtremumSeekingController
 from AD2C.callbacks.fixed_callbacks import *
-
-
 import benchmarl.models
 from benchmarl.algorithms import *
 from benchmarl.environments import VmasTask
 from benchmarl.experiment import Experiment
-from benchmarl.experiment.callback import Callback
 from benchmarl.hydra_config import (
     load_algorithm_config_from_hydra,
     load_experiment_config_from_hydra,
@@ -30,27 +25,28 @@ from benchmarl.hydra_config import (
     load_model_config_from_hydra,
 )
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical, HetControlMlpEmpiricalConfig
-# from AD2C.callback123 import *
 from AD2C.environments.vmas import render_callback
+from AD2C.callbacks.sndESLogger import TrajectorySNDLoggerCallback
+from AD2C.callbacks.performaceLoggerCallback import performaceLoggerCallback
+
+from AD2C.callbacks.SndLogCallback import SndLoggingCallback
+
 
 
 def setup(task_name):
     benchmarl.models.model_config_registry.update(
-        {
-            "hetcontrolmlpempirical": HetControlMlpEmpiricalConfig,
-        }
+        {"hetcontrolmlpempirical": HetControlMlpEmpiricalConfig}
     )
     if task_name == "vmas/navigation":
         VmasTask.render_callback = render_callback
 
-def create_experiment(cfg: DictConfig, callbacks_for_run, target_snd: float, run_name: str) -> Experiment:
+# I've removed the unused `target_snd` parameter here
+def create_experiment(cfg: DictConfig, callbacks_for_run, run_name: str) -> Experiment:
     hydra_choices = HydraConfig.get().runtime.choices
     task_name = hydra_choices.task
-    algorithm_name = hydra_choices.algorithm # Get algorithm name here
     
     setup(task_name)
     
-    # Load configs from Hydra and apply logic
     algorithm_config = load_algorithm_config_from_hydra(cfg.algorithm)
     experiment_config = load_experiment_config_from_hydra(cfg.experiment)
     task_config = load_task_config_from_hydra(cfg.task, task_name)
@@ -67,10 +63,7 @@ def create_experiment(cfg: DictConfig, callbacks_for_run, target_snd: float, run
     else:
         model_config.probabilistic = False
 
-    # ---------------------------------------------------------------------
-    # ADDED LOGIC: Set experiment name here
     experiment_config.name = run_name
-    # ---------------------------------------------------------------------
 
     return Experiment(
         task=task_config,
@@ -86,117 +79,62 @@ def create_experiment(cfg: DictConfig, callbacks_for_run, target_snd: float, run
 @hydra.main(version_base=None, config_path="conf", config_name="navigation_ippo")
 def hydra_main(cfg: DictConfig) -> None:
     hydra_choices = HydraConfig.get().runtime.choices
-    task_name = hydra_choices.task
-    algorithm_name = hydra_choices.algorithm # Added
+    algorithm_name = hydra_choices.algorithm
     
-    # Define SND arms and other parameters
-    # snd_arms = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    snd_arms = [0.5, 0.8, 1, 2, 3]
-    # snd_arms = [1]
-    exploration_frames = 1_200_000
-    # final_frames = 6_000_000
+    # 1. Run a single, longer experiment to let the ESC find the optimal SND
+    total_frames = 6_000_000
     
-    base_save_folder = HydraConfig.get().run.dir
+    # 2. Pick one reasonable starting SND for the controller and model
+    starting_snd = 0.5   #1.0  
 
-    # --- Phase 1: Exploration ---
-    print("\n--- PHASE 1: EXPLORATION (Running short experiments) ---")
-    exploration_parent_folder = os.path.join(base_save_folder, "exploration_runs")
+    print(f"\n--- RUNNING EXPERIMENT WITH EXTREMUM SEEKING CONTROLLER ---")
     
-    for i, snd in enumerate(snd_arms):
-        exploration_cfg = OmegaConf.create(cfg)
-        
-        run_save_folder = os.path.join(exploration_parent_folder, f"snd_{snd}")
-        os.makedirs(run_save_folder, exist_ok=True)
-        
-        exploration_cfg.experiment.save_folder = run_save_folder
-        exploration_cfg.experiment.max_n_frames = exploration_frames
-        exploration_cfg.seed = cfg.seed
-        
-        exploration_cfg.model.desired_snd = snd
-        
-        # ---------------------------------------------------------------------
-        # ADDED LOGIC: Define experiment name here
-        run_name = f"{algorithm_name}_targetSnd_{snd}"
-        # ---------------------------------------------------------------------
-                
-        callbacks = [
-            # SndCallbackClass(
-            #     control_group="agents",
-            #     initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
-            # ),
-
-            # gradientBaseSndCallback(
-            #     control_group = "agents",
-            #     initial_snd = snd,
-            #     learning_rate = 0.01,
-            #     alpha = 0.01,
-            # ),
-        
-            clusterSndCallback(
-                control_group="agents",
-                initial_snd=snd,  # 0.0, 0.1,
+    run_cfg = OmegaConf.create(cfg)
+    run_cfg.experiment.max_n_frames = total_frames
+    
+    # This line is crucial to prevent the TypeError on startup
+    run_cfg.model.desired_snd = starting_snd
+    
+    run_name = f"{algorithm_name}_ESC_seeking_optimum_SND"
+    
+    # 3. Configure the controller
+    callbacks = [
+        SndLoggingCallback(
+            # control_group = "agents",
             ),
-
-            # pIControllerCallback(
-            #     control_group="agents",
-            #     proportional_gain=0.2,
-            #     initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
-            # ),
-
-            # SimpleProportionalController(
-            #     control_group="agents",
-            #     proportional_gain=0.2,
-            #     initial_snd=snd,  # 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
-            # ),
-
-            NormLoggerCallback(),
-            ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
-        ]
+        ExtremumSeekingController(
+            control_group="agents",
+            initial_snd=starting_snd,
+            dither_magnitude=0.1,
+            dither_frequency_rad_s=0.5,
+            integral_gain=-0.05,  # KEY CHANGE: Use a negative gain to maximize reward
+            high_pass_cutoff_rad_s=0.1,
+            low_pass_cutoff_rad_s=0.1,
+            sampling_period=1.0
+        ),
         
-        print(f"\nRunning exploration for SND: {snd} (Seed: {exploration_cfg.seed})")
-        
-        # ---------------------------------------------------------------------
-        # ADDED LOGIC: Pass target_snd and run_name to create_experiment
-        experiment = create_experiment(
-            cfg=exploration_cfg, 
-            callbacks_for_run=callbacks, 
-            target_snd=snd,
-            run_name=run_name
-        )
-        # ---------------------------------------------------------------------
-        experiment.run()
-        
-    # --- Phase 2: Ranking ---
-    # print("\n--- PHASE 2: RANKING (Finding the best SND) ---")
-    # best_snd = find_best_snd(exploration_parent_folder)
-    # if best_snd is None:
-    #     print("Could not determine best SND. Aborting final training.")
-    #     return
+        TrajectorySNDLoggerCallback(
+            control_group = "agents",
+        ),
+        performaceLoggerCallback(
+            control_group = "agents",
+            initial_snd=starting_snd,
+        ),
+        NormLoggerCallback(),
+        ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
+    ]
     
-    # --- Phase 3: Final Training ---
-    # final_training_cfg = OmegaConf.create(cfg)
+    print(f"\nStarting run '{run_name}' (Seed: {run_cfg.seed})")
     
-    # final_run_folder = os.path.join(base_save_folder, "final_run")
-    # os.makedirs(final_run_folder, exist_ok=True)
+    experiment = create_experiment(
+        cfg=run_cfg, 
+        callbacks_for_run=callbacks, 
+        run_name=run_name
+    )
+    experiment.run()
     
-    # final_training_cfg.experiment.save_folder = final_run_folder
-    # final_training_cfg.experiment.max_n_frames = final_frames
-    # final_training_cfg.seed = cfg.seed + len(snd_arms)
-    
-    # final_callbacks = [
-    #     SndCallback(),
-    #     SimpleProportionalController(
-    #         control_group="agents",
-    #         proportional_gain=0.1,
-    #         initial_snd=best_snd,
-    #     ),
-    #     NormLoggerCallback(),
-    #     ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
-    #     SndSetterCallback(control_group="agents", snd=best_snd)
-    # ]
-    
-    # experiment = create_experiment(cfg=final_training_cfg, callbacks_for_run=final_callbacks)
-    # experiment.run()
+    print("\n--- Experiment finished ---")
+
 
 if __name__ == "__main__":
     hydra_main()

@@ -175,3 +175,36 @@ def find_centroid(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     # Using np.mean is the direct definition of a centroid and is far more
     # efficient than using a clustering algorithm like KMeans for this task.
     return np.mean(points, axis=0)
+
+# --- Helper classes based on the provided filter logic ---
+import numpy as np
+
+class Low_pass_filter_first_order:
+    """ A simple numpy-based first-order low-pass filter. """
+    def __init__(self, sampling_period, cutoff_frequency, initial_value=0.0):
+        # This coefficient determines how much of the previous value to retain
+        self.coefficient = np.exp(-sampling_period * cutoff_frequency)
+        self.previous_value = float(initial_value)
+
+    def apply(self, input_value):
+        output = self.coefficient * self.previous_value + (1 - self.coefficient) * input_value
+        self.previous_value = output # Update the internal state
+        return output
+
+class High_pass_filter_first_order:
+    """ A simple numpy-based first-order high-pass filter. """
+    def __init__(self, sampling_period, cutoff_frequency, initial_input=0.0, initial_output=0.0):
+        dt = sampling_period
+        wc = cutoff_frequency
+        self.a1 = dt * wc + 2.0
+        self.b1 = dt * wc - 2.0
+        
+        self.u_prev = float(initial_input)
+        self.y_prev = float(initial_output)
+
+    def apply(self, input_value):
+        # This formula calculates the high-pass filtered output
+        output = (1.0 / self.a1) * (-self.b1 * self.y_prev + 2.0 * (input_value - self.u_prev))
+        self.u_prev = input_value # Update state for the next step
+        self.y_prev = output
+        return output
