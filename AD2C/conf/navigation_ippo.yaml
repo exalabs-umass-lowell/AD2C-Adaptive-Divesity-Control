@@ -2,7 +2,7 @@ defaults:
   - experiment: het_control_experiment
   - algorithm: ippo
   - task: vmas/navigation
-  # - model: hetcontrolmlpempirical
+  # - model: hetcontrolmlpesc
   - model: hetcontrolmlpempirical
   - model@critic_model: layers/mlp
   - _self_
@@ -15,7 +15,7 @@ action_loss_lr: 0.00003
 
 task:
   n_agents: 5
-  agents_with_same_goal: 2
+  agents_with_same_goal: 5
   # collisions: True
   # shared_rew: False
 

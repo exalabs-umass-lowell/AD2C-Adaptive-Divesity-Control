@@ -85,7 +85,7 @@ def hydra_main(cfg: DictConfig) -> None:
     total_frames = 6_000_000
     
     # 2. Pick one reasonable starting SND for the controller and model
-    starting_snd = 0.5   #1.0  
+    starting_snd = 0.8   #1.0  0.5 0.0 0.1 0.3 0.8
 
     print(f"\n--- RUNNING EXPERIMENT WITH EXTREMUM SEEKING CONTROLLER ---")
     
@@ -105,7 +105,7 @@ def hydra_main(cfg: DictConfig) -> None:
         ExtremumSeekingController(
             control_group="agents",
             initial_snd=starting_snd,
-            dither_magnitude=0.1,
+            dither_magnitude=0.5,  # Amplitude of the dither signal
             dither_frequency_rad_s=0.5,
             integral_gain=-0.05,  # KEY CHANGE: Use a negative gain to maximize reward
             high_pass_cutoff_rad_s=0.1,

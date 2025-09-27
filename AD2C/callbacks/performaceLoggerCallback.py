@@ -48,6 +48,8 @@ class performaceLoggerCallback(Callback):
         self.eps_number = []
         self.eps_mean_returns = []
 
+        self.distance_history = []
+
         
         # Controller state variables
         self._r_baseline = 0.0
@@ -176,6 +178,8 @@ class performaceLoggerCallback(Callback):
             # Average over the time dimension and flatten for a clean 1D tensor of distances
             final_distances_tensor = raw_pairwise_distances.mean(dim=0).flatten()
             
+            self.distance_history.append(final_distances_tensor.detach().clone())
+
             graph_plot = plot_agent_distances(final_distances_tensor, self.model.n_agents)
             logs_to_push["Performance/distances graph"] = graph_plot
 
@@ -201,6 +205,14 @@ class performaceLoggerCallback(Callback):
                 )
                 logs_to_push["Performance/Trajectory Plot"] = plot_2d
                 
+                if self.distance_history:
+                    distance_growth_plot = plot_distance_history(
+                        distance_history=self.distance_history,
+                        n_agents=self.model.n_agents
+                    )
+                    if distance_growth_plot:
+                        logs_to_push["Performance/Distance Growth Plot"] = distance_growth_plot
+    
                 # save_trajectory_data_to_csv(
                 #     episodes=self.eps_number,
                 #     snd=self.eps_actual_diversity,
