@@ -37,7 +37,7 @@ def setup(task_name):
     if task_name == "vmas/navigation":
         VmasTask.render_callback = render_callback
 
-def create_experiment(cfg: DictConfig, callbacks_for_run, run_name: str) -> Experiment:
+def create_experiment(cfg: DictConfig, callbacks_for_run) -> Experiment:
     hydra_choices = HydraConfig.get().runtime.choices
     task_name = hydra_choices.task
     
@@ -59,7 +59,6 @@ def create_experiment(cfg: DictConfig, callbacks_for_run, run_name: str) -> Expe
     else:
         model_config.probabilistic = False
 
-    experiment_config.name = run_name
 
     return Experiment(
         task=task_config,
@@ -82,32 +81,33 @@ def hydra_main(cfg: DictConfig) -> None:
     # ===================================================================
     # STEP 1: Define all your experiment suites in this list
     # This is your main control panel for running experiments.
+    # esc_single_run and fixed_sweep
     # ===================================================================
     experiment_suites = [
         {
             "suite_name": "Simple Navigation Sweep",
-            "experiment_type": "fixed_sweep",
+            "experiment_type": "esc_single_run",
             "task_overrides": {
                 "n_agents": 3,
-                "agent_with_same_goals": 3,
+                "agents_with_same_goal": 3,
             },
             "snd_values": [0.3, 0.5, 0.8, 1.2],
         },
         {
             "suite_name": "Complex Navigation Sweep",
-            "experiment_type": "fixed_sweep",
+            "experiment_type": "esc_single_run",
             "task_overrides": {
                 "n_agents": 3,
-                "agent_with_same_goals": 2,
+                "agents_with_same_goal": 2,
             },
             "snd_values": [0.3, 0.5, 0.8, 1.2],
         },
         {
             "suite_name": "ESC Run on Simple Task",
-            "experiment_type": "fixed_sweep",
+            "experiment_type": "esc_single_run",
             "task_overrides": {
                 "n_agents": 3,
-                "agent_with_same_goals": 1,
+                "agents_with_same_goal": 1,
             },
             "snd_values": [0.3, 0.5, 0.8, 1.2],
         },
@@ -128,10 +128,10 @@ def hydra_main(cfg: DictConfig) -> None:
 
             # A) Apply the task/environment overrides for this suite
             for key, value in suite["task_overrides"].items():
-                run_cfg.task.config_overrides[key] = value
+                run_cfg.task[key] = value
 
             # B) Set the specific SND value for this run
-            run_cfg.model.initial_snd = initial_snd
+            # run_cfg.model.initial_snd = initial_snd
             run_cfg.model.desired_snd = initial_snd
 
             # Lock the config again now that we're done modifying it
@@ -140,7 +140,7 @@ def hydra_main(cfg: DictConfig) -> None:
             # C) Build the correct callbacks based on the experiment type
             experiment_type = suite["experiment_type"]
             if experiment_type == "fixed_sweep":
-                run_name = f"{run_cfg.task.config_overrides.scenario_name}_{algorithm_name}_fixedSND_{initial_snd:.2f}"
+                # run_name = f"{run_cfg.task.config_overrides.scenario_name}_{algorithm_name}_fixedSND_{initial_snd:.2f}"
                 callbacks = [
                     SndLoggingCallback(),
                     performaceLoggerCallback(control_group="agents", initial_snd=initial_snd),
@@ -148,7 +148,7 @@ def hydra_main(cfg: DictConfig) -> None:
                     ActionSpaceLoss(use_action_loss=cfg.use_action_loss, action_loss_lr=cfg.action_loss_lr),
                 ]
             elif experiment_type == "esc_single_run":
-                run_name = f"{run_cfg.task.config_overrides.scenario_name}_{algorithm_name}_ESC_startSND_{initial_snd:.2f}"
+                # run_name = f"{run_cfg.task.config_overrides.scenario_name}_{algorithm_name}_ESC_startSND_{initial_snd:.2f}"
                 callbacks = [
                     SndLoggingCallback(),
                     ExtremumSeekingController(
@@ -170,15 +170,15 @@ def hydra_main(cfg: DictConfig) -> None:
                 raise ValueError(f"Unknown experiment_type: '{experiment_type}'")
 
             # D) Create and run the experiment with the modified config
-            print(f"\nStarting run '{run_name}' (Seed: {run_cfg.seed})")
+            print(f"\nStarting {suite['suite_name']} run (Seed: {run_cfg.seed})")
             
             experiment = create_experiment(
                 cfg=run_cfg,
                 callbacks_for_run=callbacks,
-                run_name=run_name
+                # run_name=run_name
             )
             experiment.run()
-            print(f"\n--- {run_name} finished ---")
+            print(f"\n--- finished {suite['suite_name']} ---")
 
     print("\n--- All experiment suites finished ---")
 
