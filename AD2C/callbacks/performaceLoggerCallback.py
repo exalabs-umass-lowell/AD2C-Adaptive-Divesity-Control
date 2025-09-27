@@ -48,6 +48,8 @@ class performaceLoggerCallback(Callback):
         self.eps_number = []
         self.eps_mean_returns = []
 
+        self.distance_history = []
+
         
         # Controller state variables
         self._r_baseline = 0.0
@@ -70,7 +72,8 @@ class performaceLoggerCallback(Callback):
         policy = self.experiment.group_policies[self.control_group]
         self.model = get_het_model(policy)
 
-        if isinstance(self.model, HetControlMlpEscSnd):
+        # if isinstance(self.model, HetControlMlpEscSnd):
+        if isinstance(self.model, HetControlMlpEmpirical):
             print(f"\n SUCCESS: ClusterBase Controller initialized for group '{self.control_group}'.")
             self.model.desired_snd[:] = float(self.initial_snd)
         else:
@@ -156,14 +159,14 @@ class performaceLoggerCallback(Callback):
         plot = plot_snd_vs_reward(x, y, mean_y, next_target_diversity, mean_x, filtered_x, filtered_y)
 
         logs_to_push.update({
-            "ClusterBase/snd_actual": mean_x,
-            "ClusterBase/mean_return": mean_y,
-            "ClusterBase/score": initial_correlation_score,
-            "ClusterBase/initial_cohesion": initial_cohesion,
-            "ClusterBase/target_diversity": next_target_diversity,
-            "ClusterBase/filtered_cohesion": filtered_cohesion,
-            "ClusterBase/performance_score": performance_score,
-            "ClusterBase/Plot": plot,
+            "Performance/snd_actual": mean_x,
+            "Performance/mean_return": mean_y,
+            "Performance/score": initial_correlation_score,
+            "Performance/initial_cohesion": initial_cohesion,
+            "Performance/target_diversity": next_target_diversity,
+            "Performance/filtered_cohesion": filtered_cohesion,
+            "Performance/performance_score": performance_score,
+            "Performance/Plot": plot,
         })
 
         # Process data for agent graph and CSV only once
@@ -175,6 +178,8 @@ class performaceLoggerCallback(Callback):
             # Average over the time dimension and flatten for a clean 1D tensor of distances
             final_distances_tensor = raw_pairwise_distances.mean(dim=0).flatten()
             
+            self.distance_history.append(final_distances_tensor.detach().clone())
+
             graph_plot = plot_agent_distances(final_distances_tensor, self.model.n_agents)
             logs_to_push["Performance/distances graph"] = graph_plot
 
@@ -198,8 +203,16 @@ class performaceLoggerCallback(Callback):
                     episodes=self.eps_number,
                     target_diversity=self.eps_target_Diversity
                 )
-                logs_to_push["Performace/Trajectory Plot"] = plot_2d
+                logs_to_push["Performance/Trajectory Plot"] = plot_2d
                 
+                if self.distance_history:
+                    distance_growth_plot = plot_distance_history(
+                        distance_history=self.distance_history,
+                        n_agents=self.model.n_agents
+                    )
+                    if distance_growth_plot:
+                        logs_to_push["Performance/Distance Growth Plot"] = distance_growth_plot
+    
                 # save_trajectory_data_to_csv(
                 #     episodes=self.eps_number,
                 #     snd=self.eps_actual_diversity,

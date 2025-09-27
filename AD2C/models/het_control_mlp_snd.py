@@ -30,13 +30,8 @@ class HetControlMlpEscSnd(Model):
         self,
         activation_class: Type[nn.Module],
         num_cells: Sequence[int],
-
-        # esc_gain: float,
-        # esc_amplitude: float,
-        # esc_frequency: float,
-        
+ 
         initial_k: float,           # This is now the initial target diversity
-        # tau: float,                 # This is the ESC reward smoothing tau
         snd_tau: float,             # This is the SND measurement smoothing tau
         probabilistic: bool,
         
@@ -81,7 +76,6 @@ class HetControlMlpEscSnd(Model):
 
         # SND parameter for smoothing the diversity measurement
         self.snd_tau = snd_tau
-        # self.tau = tau
 
         self.bootstrap_from_desired_snd = bootstrap_from_desired_snd
 
@@ -94,7 +88,6 @@ class HetControlMlpEscSnd(Model):
 
     def _setup_esc_and_snd_state(self, initial_k: float, esc_tau: float):
         # State for learning the target diversity (k_hat) via ESC
-        # self.esc_tau = float(esc_tau)
         self.register_buffer("k_hat", torch.tensor([initial_k], device=self.device, dtype=torch.float))
         self.register_buffer("time_step", torch.tensor(0, device=self.device, dtype=torch.long))
         self.register_buffer("last_dither", torch.tensor([0.0], device=self.device, dtype=torch.float))
@@ -148,9 +141,9 @@ class HetControlMlpEscSnd(Model):
             if self.wt > 2 * np.pi:
                 self.wt -= 2 * np.pi
 
-        target_diversity = self.k_hat + current_dither
+        target_diversity_t = self.k_hat + current_dither
 
-        target_diversity = torch.clamp(target_diversity, min=0.0)
+        target_diversity = torch.clamp(target_diversity_t, min=0.0)
 
         shared_out = self.shared_mlp.forward(input)
         if agent_index is None:  # Gather outputs for all agents on the obs
@@ -227,7 +220,7 @@ class HetControlMlpEscSnd(Model):
             shared_loc, shared_scale = shared_out.chunk(2, -1)
 
             # DiCo scaling
-            agent_loc = shared_loc + agent_out * scaling_ratio
+            agent_loc = shared_loc + (scaling_ratio * agent_out)
             out_loc_norm = overflowing_logits_norm(
                 agent_loc, self.action_spec[self.agent_group, "action"]
             )  # For logging
@@ -236,7 +229,7 @@ class HetControlMlpEscSnd(Model):
             out = torch.cat([agent_loc, agent_scale], dim=-1)
         else:
             # DiCo scaling
-            out = shared_out + scaling_ratio * agent_out
+            out = shared_out +  ( scaling_ratio * agent_out) 
             out_loc_norm = overflowing_logits_norm(
                 out, self.action_spec[self.agent_group, "action"]
             )  # For logging
@@ -277,6 +270,23 @@ class HetControlMlpEscSnd(Model):
         return tensordict
 
     # Logs Controller Values
+    def _cost(self, tensordict: TensorDictBase) -> torch.Tensor:
+        reward_w = 1.0
+        critic_loss_w = 0.5
+        
+        reward = tensordict.get((self.agent_group, 'episode_reward'))
+        critic_loss_key = ('train', 'agents', 'loss_critic')
+
+        if critic_loss_key in tensordict.keys(include_nested=True):
+            critic_loss = tensordict.get(critic_loss_key)
+        else:
+            # If no training has happened yet, critic_loss won't exist.
+            # In this case, we fall back to a penalty of 0.
+            critic_loss = torch.tensor(0.0, device=reward.device)
+        
+        return ((critic_loss_w * critic_loss) - (reward_w * reward))
+
+
 
     def _update_esc(self, tensordict: TensorDictBase) -> None:
         """
@@ -293,21 +303,32 @@ class HetControlMlpEscSnd(Model):
             # The 'cost' is the mean reward from the environment
             # cost = (tensordict.get(reward_key).mean())
             rewards = tensordict.get(reward_key)
+            # cost = rewards 
+            
+            cost = self._cost(tensordict)
 
             dither = tensordict.get(dither_key)
 
-            if rewards.shape != dither.shape:
+            # if rewards.shape != dither.shape:
+            #     # This can happen if reward is per-agent. Average over the agent dimension.
+            #     if rewards.ndim > dither.ndim:
+            #         rewards = rewards.mean(dim=-1, keepdim=False)
+            #     if rewards.shape != dither.shape:
+            #         # If shapes still don't match, we can't proceed.
+            #         print(f"Warning: Reward shape {rewards.shape} and dither shape {dither.shape} still do not match after averaging. Skipping ESC update.")
+            #         return
+
+            if cost.shape != dither.shape:
                 # This can happen if reward is per-agent. Average over the agent dimension.
-                if rewards.ndim > dither.ndim:
-                    rewards = rewards.mean(dim=-1, keepdim=False)
-                if rewards.shape != dither.shape:
+                if cost.ndim > dither.ndim:
+                    cost = cost.mean(dim=-1, keepdim=False)
+                if cost.shape != dither.shape:
                     # If shapes still don't match, we can't proceed.
-                    print(f"Warning: Reward shape {rewards.shape} and dither shape {dither.shape} still do not match after averaging. Skipping ESC update.")
+                    print(f"Warning: Reward shape {cost.shape} and dither shape {dither.shape} still do not match after averaging. Skipping ESC update.")
                     return
 
-
             # 1. High-pass filter the cost to isolate changes
-            high_pass_output = self.high_pass_filter(rewards)
+            high_pass_output = self.high_pass_filter(cost)
 
             # 2. Demodulate to get the raw gradient signal
             # demodulation_signal = torch.sin(self.wt)
@@ -352,7 +373,7 @@ class HetControlMlpEscSnd(Model):
             setpoint = torch.clamp(setpoint, min=0.0)
             
             # 6. Update k_hat with the new setpoint
-            self.k_hat.copy_(setpoint)
+            self.k_hat = setpoint
 
             # # 7. Update the perturbation phase for the next step
             # self.wt += self.disturbance_frequency * self.dt
@@ -361,7 +382,7 @@ class HetControlMlpEscSnd(Model):
                 
             # --- Logging ---
             log_data = {
-                "reward_mean": rewards, "hpf_out": high_pass_output, "lpf_out": low_pass_output,
+                "reward_mean": cost, "hpf_out": high_pass_output, "lpf_out": low_pass_output,
                 "gradient_final": gradient, "k_hat": self.k_hat, "integral": self.integral,
                 "m2_sqrt": torch.sqrt(self.m2), "wt": self.wt
             }

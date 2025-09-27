@@ -118,9 +118,9 @@ def hydra_main(cfg: DictConfig) -> None:
         # EscLoggerCallback(
         #     # control_group = "agents",
         # ),
-        TrajectorySNDLoggerCallback(
-            control_group = "agents",
-        ),
+        # TrajectorySNDLoggerCallback(
+        #     control_group = "agents",
+        # ),
         # TrajectoryDataLogger(
         #     save_path="/home/svarp/Desktop/Projects/AD2C/Saved Run Tables"
         #     ),

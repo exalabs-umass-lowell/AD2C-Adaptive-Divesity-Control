@@ -22,7 +22,117 @@ import io
 from PIL import Image
 import wandb
 import csv
+import itertools
+import plotly.graph_objects as go
 
+# # def plot_distance_history(distance_history, n_agents):
+#     """
+#     Plots the growth of distances for each agent pair over time on a single graph.
+
+#     Args:
+#         distance_history (list): A list of 1D tensors, where each tensor contains the 
+#                                  pairwise distances at a specific time step.
+#         n_agents (int): The total number of agents.
+
+#     Returns:
+#         wandb.Image: An image object of the plot for logging.
+#     """
+#     # 1. Identify all unique agent pairs (e.g., (0,1), (0,2), (1,2), etc.)
+#     agent_pairs = list(itertools.combinations(range(n_agents), 2))
+    
+#     # 2. Restructure the data for easier plotting
+#     # Stack the list of tensors into a single [num_steps, num_pairs] tensor
+#     if not distance_history or not isinstance(distance_history[0], torch.Tensor):
+#         print("Warning: distance_history is empty or does not contain tensors. Skipping plot.")
+#         return None
+        
+#     history_tensor = torch.stack([d.cpu() for d in distance_history])
+#     # Transpose to get a [num_pairs, num_steps] tensor, making it easy to plot each pair's history
+#     history_by_pair = history_tensor.T
+    
+#     # 3. Create the plot
+#     fig, ax = plt.subplots(figsize=(12, 8))
+#     time_steps = range(len(distance_history))
+    
+#     for i, pair in enumerate(agent_pairs):
+#         agent1, agent2 = pair
+#         # Plot the distance history for the current pair
+#         ax.plot(time_steps, history_by_pair[i], label=f'Agents {agent1+1}-{agent2+1}')
+        
+#     # 4. Format the plot for clarity
+#     ax.set_title('Growth of Pairwise Agent Distances Over Time', fontsize=16)
+#     ax.set_xlabel('Time Step', fontsize=12)
+#     ax.set_ylabel('Distance', fontsize=12)
+#     ax.grid(True, linestyle='--', alpha=0.6)
+    
+#     # Place legend outside the plot area to avoid clutter, especially with many agents
+#     ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0.)
+    
+#     # Adjust layout to make room for the legend
+#     fig.tight_layout()
+    
+#     # 5. Save the plot to a memory buffer to return as an image
+#     buffer = io.BytesIO()
+#     plt.savefig(buffer, format='png', bbox_inches='tight')
+#     buffer.seek(0)
+#     plt.close(fig) # Close the figure to free up memory
+    
+#     return wandb.Image(Image.open(buffer))
+
+def plot_distance_history(distance_history, n_agents):
+    """
+    Plots the growth of agent distances over time as an interactive Plotly chart.
+
+    Args:
+        distance_history (list): A list of 1D PyTorch tensors, where each tensor 
+                                 contains the pairwise distances at a specific time step.
+        n_agents (int): The total number of agents.
+
+    Returns:
+        go.Figure: An interactive Plotly figure object, ready to be displayed 
+                   or logged directly to Weights & Biases.
+    """
+    # 1. Identify all unique agent pairs (e.g., (0,1), (0,2), (1,2), etc.)
+    agent_pairs = list(itertools.combinations(range(n_agents), 2))
+    
+    # 2. Restructure the data (this part remains the same)
+    if not distance_history or not isinstance(distance_history[0], torch.Tensor):
+        print("Warning: distance_history is empty or does not contain tensors. Skipping plot.")
+        return None
+        
+    history_tensor = torch.stack([d.cpu() for d in distance_history])
+    history_by_pair = history_tensor.T
+    
+    # 3. Create the interactive plot with Plotly
+    fig = go.Figure()
+    time_steps = list(range(len(distance_history)))
+    
+    for i, pair in enumerate(agent_pairs):
+        agent1, agent2 = pair
+        # Add a new "trace" (a line on the graph) for each agent pair
+        fig.add_trace(go.Scatter(
+            x=time_steps, 
+            y=history_by_pair[i].numpy(), # Plotly works well with NumPy arrays
+            mode='lines',
+            name=f'Agents {agent1+1}-{agent2+1}', # This appears in the legend and on hover
+            hovertemplate=f'<b>Agents {agent1+1}-{agent2+1}</b><br>' +
+                          'Time Step: %{x}<br>' +
+                          'Distance: %{y:.2f}<extra></extra>' # Custom hover text
+        ))
+        
+    # 4. Format the plot using update_layout
+    fig.update_layout(
+        title='Growth of Pairwise Agent Distances Over Time',
+        xaxis_title='Time Step',
+        yaxis_title='Distance',
+        legend_title_text='Agent Pairs',
+        template='plotly_white', # Use a clean template with a grid
+        hovermode='x unified'    # A nice feature that shows all values at a given time step
+    )
+    
+    # 5. Return the figure object directly
+    # This object can be logged to wandb, shown in a notebook, or saved to HTML.
+    return fig
 
 
 

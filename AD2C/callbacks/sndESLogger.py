@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 from tensordict import TensorDictBase
 from benchmarl.experiment import Experiment
 from benchmarl.experiment.callback import Callback
+from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
 from AD2C.models.het_control_mlp_snd import HetControlMlpEscSnd
 from callbacks.utils import get_het_model
 
@@ -34,7 +35,9 @@ class TrajectorySNDLoggerCallback(Callback):
             return
         policy = self.experiment.group_policies[self.control_group]
         self.model = get_het_model(policy)
-        if isinstance(self.model, HetControlMlpEscSnd):
+        # if isinstance(self.model, HetControlMlpEscSnd):
+            
+        if isinstance(self.model, HetControlMlpEmpirical):
             print(f"\nSUCCESS: Logger initialized for HetControlMlpEscSnd on group '{self.control_group}'.")
         else:
             print(f"\nWARNING: A compatible HetControlMlpEscSnd model was not found. Disabling logger.\n")
@@ -42,13 +45,15 @@ class TrajectorySNDLoggerCallback(Callback):
 
     def on_batch_collected(self, batch: TensorDictBase):
         """Performs the model update and then logs the results."""
-        if not isinstance(self.model, HetControlMlpEscSnd): return
+        # if not isinstance(self.model, HetControlMlpEscSnd): return
+        
+        if not isinstance(self.model, HetControlMlpEmpirical): return
 
-        self.model._update_esc(batch) # This updates k_hat (the target diversity) based on reward
-        self._log_esc_scalars(self.experiment, batch)
-        self._log_global_history(batch)
-        self._log_esc_plot(self.experiment, batch)
-        self.collect_step_count += 1
+        # self.model._update_esc(batch) # This updates k_hat (the target diversity) based on reward
+        # self._log_esc_scalars(self.experiment, batch)
+        # self._log_global_history(batch)
+        # self._log_esc_plot(self.experiment, batch)
+        # self.collect_step_count += 1
 
     # @staticmethod
     # def _process_trajectory(tensor: torch.Tensor) -> Union[np.ndarray, None]:
@@ -96,13 +101,13 @@ class TrajectorySNDLoggerCallback(Callback):
         if (self.control_group, "esc_learning") in batch.keys(include_nested=True):
             esc_learning_keys = [
                 "reward_mean", "hpf_out", "lpf_out", "gradient_final",
-                "k_hat", "integral", "m2_sqrt", "wt"
+                "k_hat", "integral", "m2_sqrt", "wt", 
             ]
             for key in esc_learning_keys:
                 val = batch.get((self.control_group, "esc_learning", key), None)
                 if val is not None:
                     # Log the post-update k_hat under a distinct name to avoid confusion
-                    log_key = "k_hat_update" if key == "k_hat" else key
+                    log_key = "target_diversity" if key == "k_hat" else key
                     to_log[f"controller_learning/{self.control_group}/{log_key}"] = val.float().mean().item()
 
         if to_log:
