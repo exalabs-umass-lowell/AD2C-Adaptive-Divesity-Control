@@ -84,24 +84,24 @@ def hydra_main(cfg: DictConfig) -> None:
     # esc_single_run and fixed_sweep
     # ===================================================================
     experiment_suites = [
-        {
-            "suite_name": "Simple Navigation Sweep",
-            "experiment_type": "esc_single_run",
-            "task_overrides": {
-                "n_agents": 3,
-                "agents_with_same_goal": 3,
-            },
-            "snd_values": [0.3, 0.5, 0.8, 1.2],
-        },
-        {
-            "suite_name": "Complex Navigation Sweep",
-            "experiment_type": "esc_single_run",
-            "task_overrides": {
-                "n_agents": 3,
-                "agents_with_same_goal": 2,
-            },
-            "snd_values": [0.3, 0.5, 0.8, 1.2],
-        },
+        # {
+        #     "suite_name": "Simple Navigation Sweep",
+        #     "experiment_type": "esc_single_run",
+        #     "task_overrides": {
+        #         "n_agents": 3,
+        #         "agents_with_same_goal": 3,
+        #     },
+        #     "snd_values": [0.0, 0.3, 0.5, 0.8, 1.2],
+        # },
+        # {
+        #     "suite_name": "Complex Navigation Sweep",
+        #     "experiment_type": "esc_single_run",
+        #     "task_overrides": {
+        #         "n_agents": 3,
+        #         "agents_with_same_goal": 2,
+        #     },
+        #     "snd_values": [0.0, 0.3, 0.5, 0.8, 1.2],
+        # },
         {
             "suite_name": "ESC Run on Simple Task",
             "experiment_type": "esc_single_run",
@@ -109,7 +109,7 @@ def hydra_main(cfg: DictConfig) -> None:
                 "n_agents": 3,
                 "agents_with_same_goal": 1,
             },
-            "snd_values": [0.3, 0.5, 0.8, 1.2],
+            "snd_values": [0.0, 0.3, 0.5, 0.8, 1.2],
         },
     ]
 
@@ -154,7 +154,7 @@ def hydra_main(cfg: DictConfig) -> None:
                     ExtremumSeekingController(
                         control_group="agents",
                         initial_snd=initial_snd,
-                        dither_magnitude=0.5,
+                        dither_magnitude=0.25,
                         dither_frequency_rad_s=0.5,
                         integral_gain=-0.05,
                         high_pass_cutoff_rad_s=0.1,

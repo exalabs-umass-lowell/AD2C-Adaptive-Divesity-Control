@@ -68,12 +68,10 @@ class esc:
         gradient = 0
 
         if self.use_adapter:
+            # Estimate the second moment (variance) of the gradient
             self.m2 = self.b2 * self.m2 + (1 - self.b2) * np.power(low_pass_output, 2)
-            if np.sqrt(self.m2) > 1:
-                gradient = low_pass_output / (np.sqrt(self.m2) + self.epsilon)
-            else:
-                gradient = low_pass_output * np.sqrt(self.m2)
-
+            # Always normalize the gradient by its root mean square
+            gradient = low_pass_output / (np.sqrt(self.m2) + self.epsilon)
         else:
             gradient = low_pass_output
 

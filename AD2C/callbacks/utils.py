@@ -86,39 +86,66 @@ def print_plt(x: List[float], y: List[float], title: str, desired_diversity: flo
 
 
 def plot_snd_vs_reward(
-    x: list, 
-    y: list, 
-    title: str, 
-    next_target_diversity: float,
-    current_target_diversity: float, # Corrected typo from "curent"
-    filtered_x: list = None, 
-    filtered_y: list = None
+    snd_values: List[float],
+    reward_values: List[float],
+    title: str,
+    filtered_snd_values: Optional[List[float]] = None,
+    filtered_reward_values: Optional[List[float]] = None,
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim: Optional[Tuple[float, float]] = None
 ) -> wandb.Image:
-    """Generates a more detailed SND vs. Reward plot and returns it as a wandb.Image."""
-    mean_y = np.mean(y)
+    """
+    Generates a detailed SND vs. Reward plot and returns it as a wandb.Image.
+
+    Args:
+        snd_values: A list of episode SND values (x-axis).
+        reward_values: A list of episode reward values (y-axis).
+        title: The title of the plot.
+        filtered_snd_values: Optional list of SND values to highlight.
+        filtered_reward_values: Optional list of reward values to highlight.
+        xlim: Optional tuple (min, max) to set the x-axis limits.
+        ylim: Optional tuple (min, max) to set the y-axis limits.
+    """
+    mean_reward = np.mean(reward_values)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(x, y, alpha=0.6, label='All Episodes')
-    ax.axhline(y=mean_y, color='gray', linestyle='--', label=f'Mean Reward ({mean_y:.2f})')
-    ax.axvline(x=next_target_diversity, color='red', linestyle='-', label=f'Next Target Diversity ({next_target_diversity:.2f})')
-    ax.axvline(x=current_target_diversity, color='blue', linestyle='--', label=f'Current Target Diversity ({current_target_diversity:.2f})')
 
-    if filtered_x is not None and filtered_y is not None:
-        ax.scatter(filtered_x, filtered_y, color='gold', edgecolor='black', s=100, label='Episodes Above Mean Reward')
+    # Plot the main data points
+    ax.scatter(snd_values, reward_values, alpha=0.6, label='All Episodes')
 
+    # Plot highlighted points if provided
+    if filtered_snd_values is not None and filtered_reward_values is not None:
+        ax.scatter(
+            filtered_snd_values,
+            filtered_reward_values,
+            color='gold',
+            edgecolor='black',
+            s=100,
+            label='Episodes Above Mean'
+        )
+
+    # Plot reference line for mean reward
+    ax.axhline(y=mean_reward, color='gray', linestyle='--', label=f'Mean Reward ({mean_reward:.2f})')
+
+    # Formatting
     ax.set_title(title)
     ax.set_xlabel('Episode SND')
     ax.set_ylabel('Episode Reward')
     ax.legend()
     ax.grid(True)
-    ax.set_xlim(-0.5, 2)
-    ax.set_ylim(-1, 7)
+    
+    # Set axis limits if provided, otherwise auto-scale
+    if xlim:
+        ax.set_xlim(xlim)
+    if ylim:
+        ax.set_ylim(ylim)
 
+    # Save plot to in-memory buffer to create wandb.Image
     buf = io.BytesIO()
     fig.savefig(buf, format='png')
     buf.seek(0)
-    plt.close(fig)
-    
+    plt.close(fig)  # Important to free up memory
+
     return wandb.Image(Image.open(buf))
 
 

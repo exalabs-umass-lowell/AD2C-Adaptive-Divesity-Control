@@ -7,81 +7,66 @@ import io
 import torch
 import wandb
 from tensordict import TensorDictBase, TensorDict
-from typing import List
 
 from benchmarl.experiment.callback import Callback
 from AD2C.models.het_control_mlp_empirical import HetControlMlpEmpirical
-from AD2C.models.het_control_mlp_snd import HetControlMlpEscSnd
 from AD2C.snd import compute_behavioral_distance
-
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from scipy.spatial.distance import euclidean
 
 from .plots import *
 from callbacks.utils import *
-import networkx as nx 
+import networkx as nx
 import pandas as pd
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import io
-from PIL import Image
-import wandb
 
 
 class performaceLoggerCallback(Callback):
     def __init__(
         self,
         control_group: str,
-        # proportional_gain: float,
         initial_snd: float,
-        ):
+    ):
         super().__init__()
         self.control_group = control_group
-        # self.proportional_gain = proportional_gain
         self.initial_snd = initial_snd
-        
-        self.eps_target_Diversity = []
+
+        self.eps_target_diversity = []
         self.eps_actual_diversity = []
         self.eps_number = []
         self.eps_mean_returns = []
-
         self.distance_history = []
 
-        
         # Controller state variables
-        self._r_baseline = 0.0
-        self._is_first_step = True
         self.model = None
 
     def on_setup(self):
         """Initializes the controller and logs hyperparameters."""
         hparams = {
-            # "controller_type": "SndCallback",
             "control_group": self.control_group,
             "initial_snd": self.initial_snd,
         }
         self.experiment.logger.log_hparams(**hparams)
 
         if self.control_group not in self.experiment.group_policies:
-            print(f"\nWARNING: Controller group '{self.control_group}' not found. Disabling controller.\n")
+            print(f"\nWARNING: Controller group '{self.control_group}' not found. Disabling callback.\n")
             return
 
         policy = self.experiment.group_policies[self.control_group]
         self.model = get_het_model(policy)
 
-        # if isinstance(self.model, HetControlMlpEscSnd):
         if isinstance(self.model, HetControlMlpEmpirical):
-            print(f"\n SUCCESS: ClusterBase Controller initialized for group '{self.control_group}'.")
+            print(f"\n SUCCESS: Performance Logger initialized for group '{self.control_group}'.")
             self.model.desired_snd[:] = float(self.initial_snd)
         else:
-            print(f"\n WARNING: A compatible model was not found for group '{self.control_group}'. Disabling controller.\n")
-            self.model = None  
+            print(f"\n WARNING: A compatible model was not found for group '{self.control_group}'. Disabling callback.\n")
+            self.model = None
 
+    # NOTE: The loop in this function calls the model's forward pass N times for N agents.
+    # For a significant performance improvement, check if your model supports a batch
+    # forward pass to get all agent actions in a single call.
     def _get_agent_actions_for_rollout(self, rollout):
-        # Compute actions for all agents given observation
+        """Compute actions for all agents given an observation sequence."""
         obs = rollout.get((self.control_group, "observation"))
         actions = []
         for i in range(self.model.n_agents):
@@ -100,27 +85,30 @@ class performaceLoggerCallback(Callback):
         logs_to_push = {}
         episode_snd = []
         episode_returns = []
-        
-        # This will hold the correctly processed distances for the agent graph and CSV
-        final_distances_tensor = None
+        final_distances_tensor = None  # Will hold distances from the first rollout for graphing
 
         with torch.no_grad():
-            for r in rollouts:
+            for i, r in enumerate(rollouts):
                 agent_actions = self._get_agent_actions_for_rollout(r)
                 
-                # The raw tensor has shape [time_steps, num_agents, num_pairs]
+                # Compute behavioral distance ONCE per rollout
                 pairwise_distances_tensor = compute_behavioral_distance(agent_actions, just_mean=False)
                 
-                # The mean across all dimensions gives a single SND value for each episode
+                # For the first rollout, save the detailed distance tensor for the agent graph
+                if i == 0 and self.model.n_agents > 1:
+                    final_distances_tensor = pairwise_distances_tensor.mean(dim=0).flatten()
+                    self.distance_history.append(final_distances_tensor.detach().clone())
+
+                # The mean SND for this episode
                 episode_snd.append(pairwise_distances_tensor.mean().item())
                 
+                # The total reward for this episode
                 reward_key = ('next', self.control_group, 'reward')
                 total_reward = r.get(reward_key).sum().item() if reward_key in r.keys(include_nested=True) else 0
                 episode_returns.append(total_reward)
 
         if not episode_returns:
-            print("\nWARNING: No episode returns found. Cannot update controller.\n")
-            self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
+            print("\nWARNING: No episode returns found. Skipping performance logging.\n")
             return
 
         x, y = np.array(episode_snd), np.array(episode_returns)
@@ -135,7 +123,7 @@ class performaceLoggerCallback(Callback):
         mask = y > mean_y
         filtered_x, filtered_y = x[mask], y[mask]
 
-        next_target_diversity = mean_x # Default value
+        next_target_diversity = mean_x
         filtered_cohesion = 0
         performance_score = 0
         
@@ -153,10 +141,18 @@ class performaceLoggerCallback(Callback):
         # --- Logging and plotting ---
         self.eps_actual_diversity.append(mean_x)
         self.eps_number.append(self.experiment.n_iters_performed)
-        self.eps_target_Diversity.append(next_target_diversity)
+        self.eps_target_diversity.append(next_target_diversity)
         self.eps_mean_returns.append(mean_y)
         
-        plot = plot_snd_vs_reward(x, y, mean_y, next_target_diversity, mean_x, filtered_x, filtered_y)
+        # Correctly call the plotting function with keyword arguments
+        plot_title = f"SND vs. Reward (Iteration {self.experiment.n_iters_performed})"
+        plot = plot_snd_vs_reward(
+            snd_values=x,
+            reward_values=y,
+            title=plot_title,
+            filtered_snd_values=filtered_x,
+            filtered_reward_values=filtered_y
+        )
 
         logs_to_push.update({
             "Performance/snd_actual": mean_x,
@@ -169,39 +165,24 @@ class performaceLoggerCallback(Callback):
             "Performance/Plot": plot,
         })
 
-        # Process data for agent graph and CSV only once
-        if self.model and self.model.n_agents > 1:
-            sample_rollout = rollouts[0]
-            agent_actions = self._get_agent_actions_for_rollout(sample_rollout)
-            raw_pairwise_distances = compute_behavioral_distance(agent_actions, just_mean=False)
-            
-            # Average over the time dimension and flatten for a clean 1D tensor of distances
-            final_distances_tensor = raw_pairwise_distances.mean(dim=0).flatten()
-            
-            self.distance_history.append(final_distances_tensor.detach().clone())
-
+        # Generate agent graph from the saved tensor without re-computing
+        if final_distances_tensor is not None:
             graph_plot = plot_agent_distances(final_distances_tensor, self.model.n_agents)
             logs_to_push["Performance/distances graph"] = graph_plot
 
-            # save_pairwise_diversity_to_csv(
-            #     pairwise_distances_tensor=final_distances_tensor,
-            #     episode_number=self.experiment.n_iters_performed,
-            #     n_agents= self.model.n_agents
-            # )
-
-        # Trajectory plot if more than one episode
+        # Trajectory plots
         if len(self.eps_number) > 1:
             eps_actual_diversity_np = np.array(self.eps_actual_diversity)
             eps_mean_returns_np = np.array(self.eps_mean_returns)
             
             if not np.all(np.isfinite(eps_actual_diversity_np)) or not np.all(np.isfinite(eps_mean_returns_np)):
-                print("\nWARNING: Non-finite data found for trajectory plot. Skipping plot for this iteration.\n")
+                print("\nWARNING: Non-finite data found for trajectory plot. Skipping.\n")
             else:
                 plot_2d = plot_trajectory_2d(
-                    snd = self.eps_actual_diversity,
-                    returns = self.eps_mean_returns,
+                    snd=self.eps_actual_diversity,
+                    returns=self.eps_mean_returns,
                     episodes=self.eps_number,
-                    target_diversity=self.eps_target_Diversity
+                    # target_diversity=self.eps_target_diversity
                 )
                 logs_to_push["Performance/Trajectory Plot"] = plot_2d
                 
@@ -213,23 +194,4 @@ class performaceLoggerCallback(Callback):
                     if distance_growth_plot:
                         logs_to_push["Performance/Distance Growth Plot"] = distance_growth_plot
     
-                # save_trajectory_data_to_csv(
-                #     episodes=self.eps_number,
-                #     snd=self.eps_actual_diversity,
-                #     returns=self.eps_mean_returns,
-                #     target_diversity=self.eps_target_Diversity,
-                #     run_name_suffix=f'initial_snd_{self.initial_snd:.2f}'
-                # )
-                
-                # trajectory_plot = plot_trajectory_3d(
-                #     snd=self.eps_actual_diversity,
-                #     returns=self.eps_mean_returns,
-                #     episodes=self.eps_number,
-                #     target_diversity=self.eps_target_Diversity
-                # )
-                # logs_to_push["ClusterBase/Trajectory_Plot_3D"] = trajectory_plot
-    
         self.experiment.logger.log(logs_to_push, step=self.experiment.n_iters_performed)
-
-        # if next_target_diversity:
-        #     self.model.desired_snd[:] = float(next_target_diversity)
