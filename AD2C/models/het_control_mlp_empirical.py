@@ -159,6 +159,7 @@ class HetControlMlpEmpirical(Model):
                 self.estimated_snd[:] = distance.detach()
         else:
             distance = self.estimated_snd
+
         if self.desired_snd == 0:
             scaling_ratio = 0.0
         elif (
@@ -168,10 +169,11 @@ class HetControlMlpEmpirical(Model):
         ):
             scaling_ratio = 1.0
         else:  # DiCo scaling
+            epsilon = 1e-8  # To avoid division by zero
             scaling_ratio = torch.where(
                 distance != self.desired_snd,
-                self.desired_snd / distance,
-                1,
+                self.desired_snd / (distance + epsilon),
+                1.0,
             )
 
         if self.probabilistic:

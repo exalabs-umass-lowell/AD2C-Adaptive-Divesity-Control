@@ -51,11 +51,14 @@ class esc:
         )
         # current phase of perturbation
         self.wt = 0
+
+        self.min_setpoint = 0.0
+        
         # integrator output
         self.integral = 0
         # estimated second moment
         self.m2 = 0
-        self.b2 = 0.9
+        self.b2 = 0.8
         # to prevent from dividing by zero
         self.epsilon = 1e-8
 
@@ -65,20 +68,49 @@ class esc:
         high_pass_output = self.high_pass_filter.apply(cost)
         low_pass_input = high_pass_output * np.sin(self.wt)
         low_pass_output = self.low_pass_filter.apply(low_pass_input)
-        gradient = 0
+
+        # if self.use_adapter:
+        #     # Estimate the second moment (variance) of the gradient
+        #     self.m2 = self.b2 * self.m2 + (1 - self.b2) * np.power(low_pass_output, 2)
+        #     # Always normalize the gradient by its root mean square
+        #     gradient = low_pass_output / (np.sqrt(self.m2) + self.epsilon)
+        # else:
+        #     gradient = low_pass_output
+
+        self.m2 = self.b2 * self.m2 + (1 - self.b2) * np.power(low_pass_output, 2)
+        gradient_mag = np.sqrt(self.m2)
+
+        threshold = 0.20
+
+        high_gain = -0.10
+        low_gain = -0.05
 
         if self.use_adapter:
-            # Estimate the second moment (variance) of the gradient
-            self.m2 = self.b2 * self.m2 + (1 - self.b2) * np.power(low_pass_output, 2)
-            # Always normalize the gradient by its root mean square
-            gradient = low_pass_output / (np.sqrt(self.m2) + self.epsilon)
+            if gradient_mag > threshold:
+                gain = high_gain
+            else:
+                gain = low_gain
         else:
-            gradient = low_pass_output
+            gain = self.integrator_gain
 
-        self.integral += self.integrator_gain * gradient * self.dt
-        setpoint = self.initial_search_value + self.integral
+
+        self.integral += gain * low_pass_output * self.dt
+        # setpoint = self.initial_search_value + self.integral
+        
+        # setpoint = max(setpoint, self.min_setpoint)
+
+        setpoint_r = self.initial_search_value + self.integral
+
+        # 2. Apply the clamp to get the actual setpoint
+        setpoint = max(setpoint_r, self.min_setpoint)
+
+        # 3. Correct the integrator state if clamping occurred
+        if setpoint < self.min_setpoint:
+            self.integral = self.min_setpoint - self.initial_search_value
+
         output = self.disturbance_magnitude * np.sin(self.wt) + setpoint
-        perturbation = self.disturbance_magnitude * np.sin(self.wt)
+
+        # perturbation = self.disturbance_magnitude * np.sin(self.wt) 
 
         # update wt
         self.wt += self.disturbance_frequency * self.dt
@@ -89,8 +121,8 @@ class esc:
             output,
             high_pass_output,
             low_pass_output,
-            (np.sqrt(self.m2) + self.epsilon),
-            gradient,
+            gradient_mag,
+            low_pass_output,
             setpoint,
         )
 

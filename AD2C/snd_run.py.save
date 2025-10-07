@@ -91,7 +91,7 @@ def hydra_main(cfg: DictConfig) -> None:
                 "n_agents": 10,
                 "agents_with_same_goal": 7,
             },
-            "snd_values": [0.4],
+            "snd_values": [0.5],
         },
         # {
         #     "suite_name": "Complex Navigation Sweep",

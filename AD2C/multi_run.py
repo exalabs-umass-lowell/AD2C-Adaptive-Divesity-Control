@@ -105,9 +105,9 @@ def hydra_main(cfg: DictConfig) -> None:
         ExtremumSeekingController(
             control_group="agents",
             initial_snd=starting_snd,
-            dither_magnitude=0.5,  # Amplitude of the dither signal
+            dither_magnitude=0.20,  # Amplitude of the dither signal
             dither_frequency_rad_s=0.5,
-            integral_gain=-0.05,  # KEY CHANGE: Use a negative gain to maximize reward
+            integral_gain=-0.05,  # Use a negative gain to maximize reward
             high_pass_cutoff_rad_s=0.1,
             low_pass_cutoff_rad_s=0.1,
             sampling_period=1.0
