@@ -88,10 +88,10 @@ def hydra_main(cfg: DictConfig) -> None:
             "suite_name": "Simple Navigation Sweep",
             "experiment_type": "esc_single_run",
             "task_overrides": {
-                "n_agents": 10,
-                "agents_with_same_goal": 7,
+                "n_agents": 3,
+                "agents_with_same_goal": 3,
             },
-            "snd_values": [0.4],
+            "snd_values": [1.3],
         },
         # {
         #     "suite_name": "Complex Navigation Sweep",
@@ -100,7 +100,7 @@ def hydra_main(cfg: DictConfig) -> None:
         #         "n_agents": 3,
         #         "agents_with_same_goal": 2,
         #     },
-        #     "snd_values": [1.0, 1.3],
+        #     "snd_values": [1.0],
         # },
         # {
         #     "suite_name": "ESC Run on Simple Task",

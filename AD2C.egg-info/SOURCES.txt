@@ -1,4 +1,3 @@
-README.md
 setup.py
 AD2C/__init__.py
 AD2C/callback123.py
@@ -10,6 +9,8 @@ AD2C/multi_traj.py
 AD2C/print_plot.py
 AD2C/run.py
 AD2C/snd.py
+AD2C/snd_esc_run.py
+AD2C/snd_run.py
 AD2C/utils.py
 AD2C.egg-info/PKG-INFO
 AD2C.egg-info/SOURCES.txt
@@ -20,6 +21,7 @@ AD2C/environments/vmas.py
 AD2C/models/__init__.py
 AD2C/models/het_control_mlp_empirical.py
 AD2C/models/het_control_mlp_esc.py
+AD2C/models/het_control_mlp_snd.py
 AD2C/models/utils.py
 AD2C/run_script/__init__.py
 AD2C/run_script/run_dispersion_ippo.py

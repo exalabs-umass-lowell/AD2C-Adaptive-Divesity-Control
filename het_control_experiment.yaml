@@ -1,0 +1,19 @@
+efaults:
+  - experiment_config
+  - _self_
+
+# The device for collection (e.g. cuda)
+sampling_device: "cuda:5"
+# The device for training (e.g. cuda)
+train_device: "cuda:5"
+
+# Whether to share the parameters of the policy within agent groups
+share_policy_params: True # This won't matter as our model ignores it
+# If an algorithm and an env support both continuous and discrete actions, what should >
+prefer_continuous_actions: True
+
+# Discount factor
+gamma: 0.9
+# Learning rate
+lr: 0.00005
+# Clips grad norm if true and clips grad value if false
